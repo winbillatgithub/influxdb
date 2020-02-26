@@ -58,7 +58,11 @@ func parseFunction(expr *influxql.Call) (*function, error) {
 		default:
 			return nil, fmt.Errorf("expected field argument in %s()", expr.Name)
 		}
+<<<<<<< HEAD
 	case "min", "max", "sum", "first", "last", "mean", "median", "difference", "stddev", "spread":
+=======
+	case "min", "max", "sum", "first", "last", "mean", "median", "difference":
+>>>>>>> feat(transpiler): support difference(), group by wildcard, and correct _time column
 		if exp, got := 1, len(expr.Args); exp != got {
 			return nil, fmt.Errorf("invalid number of arguments for %s, expected %d, got %d", expr.Name, exp, got)
 		}
@@ -119,7 +123,11 @@ func createFunctionCursor(t *transpilerState, call *influxql.Call, in cursor, no
 		parent: in,
 	}
 	switch call.Name {
+<<<<<<< HEAD
 	case "count", "min", "max", "sum", "first", "last", "mean", "difference", "stddev", "spread":
+=======
+	case "count", "min", "max", "sum", "first", "last", "mean", "difference":
+>>>>>>> feat(transpiler): support difference(), group by wildcard, and correct _time column
 		value, ok := in.Value(call.Args[0])
 		if !ok {
 			return nil, fmt.Errorf("undefined variable: %s", call.Args[0])
@@ -372,6 +380,31 @@ func createFunctionCursor(t *transpilerState, call *influxql.Call, in cursor, no
 								},
 							},
 						},
+					},
+				},
+			},
+		}
+	} else {
+		cur.expr = &ast.PipeExpression{
+			Argument: cur.expr,
+			Call: &ast.CallExpression{
+				Callee: &ast.Identifier{
+					Name: "drop",
+				},
+				Arguments: []ast.Expression{
+					&ast.ObjectExpression{
+						Properties: []*ast.Property{{
+							Key: &ast.Identifier{
+								Name: "columns",
+							},
+							Value: &ast.ArrayExpression{
+								Elements: []ast.Expression{
+									&ast.StringLiteral{Value: execute.DefaultStartColLabel},
+									&ast.StringLiteral{Value: execute.DefaultStopColLabel},
+									&ast.StringLiteral{Value: "_field"},
+								},
+							},
+						}},
 					},
 				},
 			},

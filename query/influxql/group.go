@@ -244,7 +244,11 @@ func (gr *groupInfo) createCursor(t *transpilerState) (cursor, error) {
 
 	// If a function call is present, evaluate the function call.
 	if gr.call != nil {
+<<<<<<< HEAD
 		c, err := createFunctionCursor(t, gr.call, cur, gr.needNormalization || interval > 0)
+=======
+		c, err := createFunctionCursor(t, gr.call, cur, interval > 0)
+>>>>>>> feat(transpiler): support difference(), group by wildcard, and correct _time column
 		if err != nil {
 			return nil, err
 		}

@@ -84,6 +84,12 @@ var skipTests = map[string]string{
 	"selector_2":               "Transpiler: first function uses different series than influxQL https://github.com/influxdata/influxdb/issues/10737",
 	"selector_6":               "Transpiler: first function uses different series than influxQL https://github.com/influxdata/influxdb/issues/10737",
 	"selector_7":               "Transpiler: first function uses different series than influxQL https://github.com/influxdata/influxdb/issues/10737",
+<<<<<<< HEAD
+=======
+	//"series_agg_0":             "Transpiler: Implement difference https://github.com/influxdata/influxdb/issues/10736",
+	"series_agg_1":             "Transpiler: Implement stddev https://github.com/influxdata/influxdb/issues/10735",
+	"series_agg_2":             "Transpiler: Implement spread https://github.com/influxdata/influxdb/issues/10734",
+>>>>>>> feat(transpiler): support difference(), group by wildcard, and correct _time column
 	"series_agg_3":             "Transpiler: Implement elapsed https://github.com/influxdata/influxdb/issues/10733",
 	"series_agg_4":             "Transpiler: Implement cumulative_sum https://github.com/influxdata/influxdb/issues/10732",
 	"series_agg_5":             "add derivative support to the transpiler https://github.com/influxdata/influxdb/issues/10759",
