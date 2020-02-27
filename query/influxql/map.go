@@ -46,11 +46,7 @@ func (t *transpilerState) mapFields(in cursor) (cursor, error) {
 			// Skip past any time columns.
 			continue
 		}
-<<<<<<< HEAD
 		fieldName, err := t.mapField(f.Expr, in, false)
-=======
-		fieldName, err := t.mapField(f.Expr, in)
->>>>>>> feat(transpiler): support difference(), group by wildcard, and correct _time column
 		if err != nil {
 			return nil, err
 		}
@@ -91,15 +87,12 @@ func (t *transpilerState) mapField(expr influxql.Expr, in cursor, returnMemberEx
 		} else {
 			mappedName = &ast.StringLiteral{Value: sym}
 		}
-<<<<<<< HEAD
 		if returnMemberExpr {
 			return &ast.MemberExpression{
 				Object:   &ast.Identifier{Name: "r"},
 				Property: mappedName.(ast.PropertyKey),
 			}, nil
 		}
-=======
->>>>>>> feat(transpiler): support difference(), group by wildcard, and correct _time column
 		return mappedName, nil
 	}
 
