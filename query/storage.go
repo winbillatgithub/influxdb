@@ -9,7 +9,6 @@ import (
 	"github.com/influxdata/flux/memory"
 	"github.com/influxdata/flux/plan"
 	"github.com/influxdata/influxdb/v2"
-	"github.com/influxdata/influxdb/v2/storage/reads"
 	"github.com/influxdata/influxdb/v2/storage/reads/datatypes"
 	"github.com/influxdata/influxdb/v2/tsdb/cursors"
 )
@@ -26,9 +25,7 @@ type StorageReader interface {
 }
 
 // WindowAggregateCapability describes what is supported by WindowAggregateReader.
-type WindowAggregateCapability interface {
-	reads.WindowAggregateCapability
-}
+type WindowAggregateCapability interface {}
 
 // WindowAggregateReader implements the WindowAggregate capability.
 type WindowAggregateReader interface {

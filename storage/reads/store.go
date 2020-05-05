@@ -5,6 +5,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb/v2/models"
+	"github.com/influxdata/influxdb/v2/query"
 	"github.com/influxdata/influxdb/v2/storage/reads/datatypes"
 	"github.com/influxdata/influxdb/v2/tsdb/cursors"
 )
@@ -84,7 +85,9 @@ type Store interface {
 }
 
 // WindowAggregateCapability describes what is supported by WindowAggregateStore.
-type WindowAggregateCapability interface{}
+type WindowAggregateCapability interface{
+	query.WindowAggregateCapability
+}
 
 // WindowAggregateStore implements the WindowAggregate capability.
 type WindowAggregateStore interface {
