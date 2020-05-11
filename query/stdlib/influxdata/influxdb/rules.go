@@ -26,7 +26,7 @@ func init() {
 		SortedPivotRule{},
 		// For this rule to take effect the appropriate capabilities must be
 		// added AND feature flags must be enabled.
-		// PushDownWindowAggregateRule{},
+		PushDownWindowAggregateRule{},
 
 		// For this rule to take effect the corresponding feature flags must be
 		// enabled.
