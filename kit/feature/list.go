@@ -58,11 +58,26 @@ func SessionService() BoolFlag {
 	return sessionService
 }
 
+var newLabels = MakeBoolFlag(
+	"New Label Package",
+	"newLabels",
+	"Alirie Gray",
+	false,
+	Temporary,
+	false,
+)
+
+// NewLabelPackage - Enables the refactored labels api
+func NewLabelPackage() BoolFlag {
+	return newLabels
+}
+
 var all = []Flag{
 	backendExample,
 	frontendExample,
 	newAuth,
 	sessionService,
+	newLabels,
 }
 
 var byKey = map[string]Flag{
@@ -70,4 +85,5 @@ var byKey = map[string]Flag{
 	"frontendExample": frontendExample,
 	"newAuth":         newAuth,
 	"sessionService":  sessionService,
+	"newLabels":       newLabels,
 }

@@ -40,3 +40,10 @@
   default: false
   contact: Lyon Hill
   expose: true
+
+- name: New Label Package
+  description: Enables the refactored labels api
+  key: newLabels
+  default: false
+  contact: Alirie Gray
+  lifetime: temporary
