@@ -83,19 +83,19 @@ influx_stress
 **/influx_stress
 !**/influx_stress/
 
-influxd
+/influxd
 **/influxd
 !**/influxd/
 
-influx
+/influx
 **/influx
 !**/influx/
 
-influxdb
+/influxdb
 **/influxdb
 !**/influxdb/
 
-influx_inspect
+/influx_inspect
 **/influx_inspect
 !**/influx_inspect/
 
