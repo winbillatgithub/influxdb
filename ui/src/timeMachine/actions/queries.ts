@@ -24,6 +24,7 @@ import {
 // Utils
 import {getActiveTimeMachine, getActiveQuery} from 'src/timeMachine/selectors'
 import fromFlux from 'src/shared/utils/fromFlux'
+import {isFlagEnabled} from 'src/shared/utils/featureFlag'
 import {getAllVariables, asAssignment} from 'src/variables/selectors'
 import {buildVarsOption} from 'src/variables/utils/buildVarsOption'
 import {findNodes} from 'src/shared/utils/ast'
@@ -31,6 +32,10 @@ import {
   isDemoDataAvailabilityError,
   demoDataError,
 } from 'src/cloud/utils/demoDataErrors'
+import {
+  reportSimpleQueryPerformanceEvent,
+  reportQueryPerformanceEvent,
+} from 'src/cloud/utils/reporting'
 
 // Types
 import {CancelBox} from 'src/types/promises'
@@ -105,7 +110,12 @@ const isFromBucket = (node: Node) => {
   )
 }
 
-export const executeQueries = () => async (dispatch, getState: GetState) => {
+export const executeQueries = (abortController?: AbortController) => async (
+  dispatch,
+  getState: GetState
+) => {
+  reportSimpleQueryPerformanceEvent('executeQueries function start')
+
   const state = getState()
 
   const allBuckets = getAll<Bucket>(state, ResourceType.Buckets)
@@ -139,18 +149,25 @@ export const executeQueries = () => async (dispatch, getState: GetState) => {
     const startTime = window.performance.now()
 
     pendingResults.forEach(({cancel}) => cancel())
+    reportSimpleQueryPerformanceEvent('executeQueries queries start')
 
     pendingResults = queries.map(({text}) => {
+      reportQueryPerformanceEvent({
+        timestamp: Date.now() * 1000000,
+        fields: {},
+        tags: {event: 'executeQueries queries', query: text},
+      })
       const orgID = getOrgIDFromBuckets(text, allBuckets) || getOrg(state).id
 
       fireQueryEvent(getOrg(state).id, orgID)
 
       const extern = buildVarsOption(variableAssignments)
 
-      return runQuery(orgID, text, extern)
+      return runQuery(orgID, text, extern, abortController)
     })
-
     const results = await Promise.all(pendingResults.map(r => r.promise))
+    reportSimpleQueryPerformanceEvent('executeQueries queries end')
+
     const duration = window.performance.now() - startTime
 
     let statuses = [[]] as StatusRow[][]
@@ -181,23 +198,28 @@ export const executeQueries = () => async (dispatch, getState: GetState) => {
         dispatch(notify(resultTooLarge(result.bytesRead)))
       }
 
-      // TODO: this is just here for validation. since we are already eating
-      // the cost of parsing the results, we should store the output instead
-      // of the raw input
-      fromFlux(result.csv)
+      if (isFlagEnabled('fluxParser')) {
+        // TODO: this is just here for validation. since we are already eating
+        // the cost of parsing the results, we should store the output instead
+        // of the raw input
+        fromFlux(result.csv)
+      }
     }
 
     const files = (results as RunQuerySuccessResult[]).map(r => r.csv)
     dispatch(
       setQueryResults(RemoteDataState.Done, files, duration, null, statuses)
     )
-  } catch (e) {
-    if (e.name === 'CancellationError') {
+    reportSimpleQueryPerformanceEvent('executeQueries function start')
+    return results
+  } catch (error) {
+    if (error.name === 'CancellationError' || error.name === 'AbortError') {
+      dispatch(setQueryResults(RemoteDataState.Done, null, null))
       return
     }
 
-    console.error(e)
-    dispatch(setQueryResults(RemoteDataState.Error, null, null, e.message))
+    console.error(error)
+    dispatch(setQueryResults(RemoteDataState.Error, null, null, error.message))
   }
 }
 
@@ -209,9 +231,12 @@ const saveDraftQueries = (): SaveDraftQueriesAction => ({
   type: 'SAVE_DRAFT_QUERIES',
 })
 
-export const saveAndExecuteQueries = () => dispatch => {
+export const saveAndExecuteQueries = (
+  abortController?: AbortController
+) => dispatch => {
   dispatch(saveDraftQueries())
-  dispatch(executeQueries())
+  dispatch(setQueryResults(RemoteDataState.Loading, [], null))
+  dispatch(executeQueries(abortController))
 }
 
 export const executeCheckQuery = () => async (dispatch, getState: GetState) => {
@@ -249,10 +274,12 @@ export const executeCheckQuery = () => async (dispatch, getState: GetState) => {
       dispatch(notify(resultTooLarge(result.bytesRead)))
     }
 
-    // TODO: this is just here for validation. since we are already eating
-    // the cost of parsing the results, we should store the output instead
-    // of the raw input
-    fromFlux(result.csv)
+    if (isFlagEnabled('fluxParser')) {
+      // TODO: this is just here for validation. since we are already eating
+      // the cost of parsing the results, we should store the output instead
+      // of the raw input
+      fromFlux(result.csv)
+    }
 
     const file = result.csv
 

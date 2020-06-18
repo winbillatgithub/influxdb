@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/influxdata/flux/execute"
 	"github.com/influxdata/flux/lang"
 	"github.com/influxdata/flux/parser"
+	"github.com/influxdata/flux/runtime"
 	"github.com/influxdata/flux/stdlib"
 
 	platform "github.com/influxdata/influxdb/v2"
@@ -21,13 +23,63 @@ import (
 	"github.com/influxdata/influxdb/v2/query"
 	_ "github.com/influxdata/influxdb/v2/query/stdlib"
 	itesting "github.com/influxdata/influxdb/v2/query/stdlib/testing" // Import the stdlib
+	"github.com/influxdata/influxdb/v2/kit/feature"
+	"github.com/influxdata/influxdb/v2/kit/feature/override"
 )
+
+// Flagger for end-to-end test cases. This flagger contains a pointer to a
+// single struct instance that all the test cases will consult. It will return flags
+// based on the contents of FluxEndToEndFeatureFlags and the currently active
+// test case. This works only because tests are serialized. We can set the
+// current test case in the common flagger state, then run the test. If we were
+// to run tests in parallel we would need to create multiple users and assign
+// them different flags combinations, then run the tests under different users.
+
+type Flagger struct {
+	flaggerState *FlaggerState
+}
+
+type FlaggerState struct {
+	Path             string
+	Name             string
+	FeatureFlags     itesting.PerTestFeatureFlagMap
+	DefaultFlagger   feature.Flagger
+}
+
+func newFlagger(featureFlagMap itesting.PerTestFeatureFlagMap) Flagger {
+	flaggerState := &FlaggerState{}
+	flaggerState.FeatureFlags = featureFlagMap
+	flaggerState.DefaultFlagger = feature.DefaultFlagger()
+	return Flagger{flaggerState}
+}
+
+func (f Flagger) SetActiveTestCase(path string, name string) {
+	f.flaggerState.Path = path
+	f.flaggerState.Name = name
+}
+
+func (f Flagger) Flags(ctx context.Context, _f ...feature.Flag) (map[string]interface{}, error) {
+	// If an override is set for the test case, construct an override flagger
+	// and use it's computed flags.
+	overrides := f.flaggerState.FeatureFlags[f.flaggerState.Path][f.flaggerState.Name]
+	if overrides != nil {
+		f, err := override.Make( overrides, nil )
+		if err != nil {
+			panic("failed to construct override flagger, probably an invalid flag in FluxEndToEndFeatureFlags")
+		}
+		return f.Flags(ctx)
+	}
+
+	// Otherwise use flags from a default flagger.
+	return f.flaggerState.DefaultFlagger.Flags( ctx )
+}
+
 
 // Default context.
 var ctx = influxdbcontext.SetAuthorizer(context.Background(), mock.NewMockAuthorizer(true, nil))
 
 func init() {
-	flux.FinalizeBuiltIns()
+	runtime.FinalizeBuiltIns()
 }
 
 func TestFluxEndToEnd(t *testing.T) {
@@ -38,7 +90,8 @@ func BenchmarkFluxEndToEnd(b *testing.B) {
 }
 
 func runEndToEnd(t *testing.T, pkgs []*ast.Package) {
-	l := launcher.RunTestLauncherOrFail(t, ctx)
+	flagger := newFlagger(itesting.FluxEndToEndFeatureFlags)
+	l := launcher.RunTestLauncherOrFail(t, ctx, flagger)
 	l.SetupOrFail(t)
 	defer l.ShutdownOrFail(t, ctx)
 	for _, pkg := range pkgs {
@@ -58,6 +111,8 @@ func runEndToEnd(t *testing.T, pkgs []*ast.Package) {
 					if reason, ok := itesting.FluxEndToEndSkipList[pkg.Path][name]; ok {
 						t.Skip(reason)
 					}
+
+					flagger.SetActiveTestCase(pkg.Path, name)
 					testFlux(t, l, file)
 				})
 			}
@@ -158,9 +213,14 @@ func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
 	inspectCalls := stdlib.TestingInspectCalls(pkg)
 	pkg.Files = append(pkg.Files, inspectCalls)
 
+	bs, err := json.Marshal(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	req := &query.Request{
 		OrganizationID: l.Org.ID,
-		Compiler:       lang.ASTCompiler{AST: pkg},
+		Compiler:       lang.ASTCompiler{AST: bs},
 	}
 	if r, err := l.FluxQueryService().Query(ctx, req); err != nil {
 		t.Fatal(err)
@@ -183,11 +243,22 @@ func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
 	// this time we use a call to `run` so that the assertion error is triggered
 	runCalls := stdlib.TestingRunCalls(pkg)
 	pkg.Files[len(pkg.Files)-1] = runCalls
+
+	bs, err = json.Marshal(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req = &query.Request{
+		OrganizationID: l.Org.ID,
+		Compiler:       lang.ASTCompiler{AST: bs},
+	}
 	r, err := l.FluxQueryService().Query(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	needInspect := false
 	for r.More() {
 		v := r.Next()
 		if err := v.Tables().Do(func(tbl flux.Table) error {
@@ -195,13 +266,25 @@ func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
 				return nil
 			})
 		}); err != nil {
+			needInspect = true
 			t.Error(err)
 		}
 	}
 	if err := r.Err(); err != nil {
 		t.Error(err)
+		needInspect = true
+	}
+	if needInspect {
 		// Replace the testing.run calls with testing.inspect calls.
 		pkg.Files[len(pkg.Files)-1] = inspectCalls
+		bs, err = json.Marshal(pkg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req = &query.Request{
+			OrganizationID: l.Org.ID,
+			Compiler:       lang.ASTCompiler{AST: bs},
+		}
 		r, err := l.FluxQueryService().Query(ctx, req)
 		if err != nil {
 			t.Fatal(err)

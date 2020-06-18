@@ -15,15 +15,14 @@ import (
 	"github.com/NYTimes/gziphandler"
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/ast"
-	"github.com/influxdata/flux/complete"
 	"github.com/influxdata/flux/csv"
 	"github.com/influxdata/flux/iocounter"
-	"github.com/influxdata/flux/parser"
 	"github.com/influxdata/httprouter"
 	"github.com/influxdata/influxdb/v2"
 	pcontext "github.com/influxdata/influxdb/v2/context"
 	"github.com/influxdata/influxdb/v2/http/metric"
 	"github.com/influxdata/influxdb/v2/kit/check"
+	"github.com/influxdata/influxdb/v2/kit/feature"
 	"github.com/influxdata/influxdb/v2/kit/tracing"
 	kithttp "github.com/influxdata/influxdb/v2/kit/transport/http"
 	"github.com/influxdata/influxdb/v2/logger"
@@ -49,6 +48,8 @@ type FluxBackend struct {
 	AlgoWProxy          FeatureProxyHandler
 	OrganizationService influxdb.OrganizationService
 	ProxyQueryService   query.ProxyQueryService
+	FluxLanguageService influxdb.FluxLanguageService
+	Flagger             feature.Flagger
 }
 
 // NewFluxBackend returns a new instance of FluxBackend.
@@ -63,6 +64,8 @@ func NewFluxBackend(log *zap.Logger, b *APIBackend) *FluxBackend {
 			DefaultService:  b.FluxService,
 		},
 		OrganizationService: b.OrganizationService,
+		FluxLanguageService: b.FluxLanguageService,
+		Flagger:             b.Flagger,
 	}
 }
 
@@ -80,8 +83,11 @@ type FluxHandler struct {
 	Now                 func() time.Time
 	OrganizationService influxdb.OrganizationService
 	ProxyQueryService   query.ProxyQueryService
+	FluxLanguageService influxdb.FluxLanguageService
 
 	EventRecorder metric.EventRecorder
+
+	Flagger feature.Flagger
 }
 
 // Prefix provides the route prefix.
@@ -100,6 +106,8 @@ func NewFluxHandler(log *zap.Logger, b *FluxBackend) *FluxHandler {
 		ProxyQueryService:   b.ProxyQueryService,
 		OrganizationService: b.OrganizationService,
 		EventRecorder:       b.QueryEventRecorder,
+		FluxLanguageService: b.FluxLanguageService,
+		Flagger:             b.Flagger,
 	}
 
 	// query reponses can optionally be gzip encoded
@@ -168,6 +176,9 @@ func (h *FluxHandler) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Transform the context into one with the request's authorization.
 	ctx = pcontext.SetAuthorizer(ctx, req.Request.Authorization)
+	if h.Flagger != nil {
+		ctx, _ = feature.Annotate(ctx, h.Flagger)
+	}
 
 	hd, ok := req.Dialect.(HTTPDialect)
 	if !ok {
@@ -222,9 +233,8 @@ func (h *FluxHandler) postFluxAST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pkg := parser.ParseSource(request.Query)
-	if ast.Check(pkg) > 0 {
-		err := ast.GetError(pkg)
+	pkg, err := query.Parse(h.FluxLanguageService, request.Query)
+	if err != nil {
 		h.HandleHTTPError(ctx, &influxdb.Error{
 			Code: influxdb.EInvalid,
 			Msg:  "invalid AST",
@@ -260,7 +270,7 @@ func (h *FluxHandler) postQueryAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a, err := req.Analyze()
+	a, err := req.Analyze(h.FluxLanguageService)
 	if err != nil {
 		h.HandleHTTPError(ctx, err, w)
 		return
@@ -291,7 +301,7 @@ func (h *FluxHandler) getFluxSuggestions(w http.ResponseWriter, r *http.Request)
 	defer span.Finish()
 
 	ctx := r.Context()
-	completer := complete.DefaultCompleter()
+	completer := h.FluxLanguageService.Completer()
 	names := completer.FunctionNames()
 	var functions []suggestionResponse
 	for _, name := range names {
@@ -330,7 +340,7 @@ func (h *FluxHandler) getFluxSuggestion(w http.ResponseWriter, r *http.Request) 
 
 	ctx := r.Context()
 	name := httprouter.ParamsFromContext(ctx).ByName("name")
-	completer := complete.DefaultCompleter()
+	completer := h.FluxLanguageService.Completer()
 
 	suggestion, err := completer.FunctionSuggestion(name)
 	if err != nil {

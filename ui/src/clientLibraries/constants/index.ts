@@ -1,17 +1,188 @@
 import {SFC} from 'react'
-import CSharpLogo from '../graphics/CSharpLogo'
-import GoLogo from '../graphics/GoLogo'
-import JavaLogo from '../graphics/JavaLogo'
-import JSLogo from '../graphics/JSLogo'
-import PHPLogo from '../graphics/PHPLogo'
-import PythonLogo from '../graphics/PythonLogo'
-import RubyLogo from '../graphics/RubyLogo'
+import {
+  ArduinoLogo,
+  CSharpLogo,
+  GoLogo,
+  JavaLogo,
+  JSLogo,
+  KotlinLogo,
+  PHPLogo,
+  PythonLogo,
+  RubyLogo,
+  ScalaLogo,
+} from '../graphics'
 
 export interface ClientLibrary {
   id: string
   name: string
   url: string
   image: SFC
+}
+
+export const clientArduinoLibrary = {
+  id: 'arduino',
+  name: 'Arduino',
+  url: 'https://github.com/tobiasschuerg/InfluxDB-Client-for-Arduino',
+  image: ArduinoLogo,
+  installingLibraryManagerCodeSnippet: `1. Open the Arduino IDE and click to the "Sketch" menu and then Include Library > Manage Libraries.
+2. Type 'influxdb' in the search box
+3. Install the 'InfluxDBClient for Arduino' library`,
+  installingManualCodeSnippet: `1. cd <arduino-sketch-location>/library.
+2. git clone <%= url %>
+3. Restart the Arduino IDE`,
+  initializeClientCodeSnippet: `#if defined(ESP32)
+#include <WiFiMulti.h>
+WiFiMulti wifiMulti;
+#define DEVICE "ESP32"
+#elif defined(ESP8266)
+#include <ESP8266WiFiMulti.h>
+ESP8266WiFiMulti wifiMulti;
+#define DEVICE "ESP8266"
+#endif
+
+#include <InfluxDbClient.h>
+#include <InfluxDbCloud.h>
+
+// WiFi AP SSID
+#define WIFI_SSID "SSID"
+// WiFi password
+#define WIFI_PASSWORD "PASSWORD"
+// InfluxDB v2 server url, e.g. https://eu-central-1-1.aws.cloud2.influxdata.com (Use: InfluxDB UI -> Load Data -> Client Libraries)
+#define INFLUXDB_URL "<%= server %>"
+// InfluxDB v2 server or cloud API authentication token (Use: InfluxDB UI -> Load Data -> Tokens -> <select token>)
+#define INFLUXDB_TOKEN "<%= token %>"
+// InfluxDB v2 organization id (Use: InfluxDB UI -> Settings -> Profile -> <name under tile> )
+#define INFLUXDB_ORG "<%= org %>"
+// InfluxDB v2 bucket name (Use: InfluxDB UI -> Load Data -> Buckets)
+#define INFLUXDB_BUCKET "<%= bucket %>"
+
+// Set timezone string according to https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
+// Examples:
+//  Pacific Time: "PST8PDT"
+//  Eastern: "EST5EDT"
+//  Japanesse: "JST-9"
+//  Central Europe: "CET-1CEST,M3.5.0,M10.5.0/3"
+#define TZ_INFO "CET-1CEST,M3.5.0,M10.5.0/3"
+
+// InfluxDB client instance with preconfigured InfluxCloud certificate
+InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
+
+// Data point
+Point sensor("wifi_status");
+
+void setup() {
+  Serial.begin(115200);
+
+  // Setup wifi
+  WiFi.mode(WIFI_STA);
+  wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.print("Connecting to wifi");
+  while (wifiMulti.run() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(100);
+  }
+  Serial.println();
+
+  // Add tags
+  sensor.addTag("device", DEVICE);
+  sensor.addTag("SSID", WiFi.SSID());
+
+  // Accurate time is necessary for certificate validation and writing in batches
+  // For the fastest time sync find NTP servers in your area: https://www.pool.ntp.org/zone/
+  // Syncing progress and the time will be printed to Serial.
+  timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");
+
+  // Check server connection
+  if (client.validateConnection()) {
+    Serial.print("Connected to InfluxDB: ");
+    Serial.println(client.getServerUrl());
+  } else {
+    Serial.print("InfluxDB connection failed: ");
+    Serial.println(client.getLastErrorMessage());
+  }
+}`,
+  writingDataPointCodeSnippet: `void loop() {
+  // Clear fields for reusing the point. Tags will remain untouched
+  sensor.clearFields();
+  
+  // Store measured value into point
+  // Report RSSI of currently connected network
+  sensor.addField("rssi", WiFi.RSSI());
+  
+  // Print what are we exactly writing
+  Serial.print("Writing: ");
+  Serial.println(sensor.toLineProtocol());
+  
+  // If no Wifi signal, try to reconnect it
+  if ((WiFi.RSSI() == 0) && (wifiMulti.run() != WL_CONNECTED)) {
+    Serial.println("Wifi connection lost");
+  }
+  
+  // Write point
+  if (!client.writePoint(sensor)) {
+    Serial.print("InfluxDB write failed: ");
+    Serial.println(client.getLastErrorMessage());
+  }
+
+  //Wait 10s
+  Serial.println("Wait 10s");
+  delay(10000);
+}`,
+  executeQueryCodeSnippet: `void loop() {
+  // Construct a Flux query
+  // Query will find the worst RSSI for last hour for each connected WiFi network with this device
+  String query = "from(bucket: \\"" INFLUXDB_BUCKET "\\") |> range(start: -1h) |> filter(fn: (r) => r._measurement == \\"wifi_status\\" and r._field == \\"rssi\\"";
+  query += " and r.device == \\""  DEVICE  "\\")";
+  query += "|> min()";
+
+  // Print ouput header
+  Serial.print("==== ");
+  Serial.print(selectorFunction);
+  Serial.println(" ====");
+
+  // Print composed query
+  Serial.print("Querying with: ");
+  Serial.println(query);
+
+  // Send query to the server and get result
+  FluxQueryResult result = client.query(query);
+
+  // Iterate over rows. Even there is just one row, next() must be called at least once.
+  while (result.next()) {
+    // Get converted value for flux result column 'SSID'
+    String ssid = result.getValueByName("SSID").getString();
+    Serial.print("SSID '");
+    Serial.print(ssid);
+
+    Serial.print("' with RSSI ");
+    // Get converted value for flux result column '_value' where there is RSSI value
+    long value = result.getValueByName("_value").getLong();
+    Serial.print(value);
+
+    // Get converted value for the _time column
+    FluxDateTime time = result.getValueByName("_time").getDateTime();
+
+    // Format date-time for printing
+    // Format string according to http://www.cplusplus.com/reference/ctime/strftime/
+    String timeStr = time.format("%F %T");
+
+    Serial.print(" at ");
+    Serial.print(timeStr);
+    
+    Serial.println();
+  }
+
+  // Check if there was an error
+  if(result.getError() != "") {
+    Serial.print("Query result error: ");
+    Serial.println(result.getError());
+  }
+
+  // Close the result
+  result.close();
+}
+`,
 }
 
 export const clientCSharpLibrary = {
@@ -254,11 +425,13 @@ queryApi.queryRows(query, {
     console.log('\\nFinished SUCCESS')
   },
 })`,
-  writingDataLineProtocolCodeSnippet: `const writeApi = client.getWriteApi(org, bucket)
-  
-const data = 'mem,host=host1 used_percent=23.43234543' // Line protocol string
-writeApi.writeRecord(data)
+  writingDataLineProtocolCodeSnippet: `const {Point} = require('@influxdata/influxdb-client')
+const writeApi = client.getWriteApi(org, bucket)
+writeApi.useDefaultTags({host: 'host1'})
 
+const point = new Point('mem')
+  .floatField('used_percent', 23.43234543)
+writeApi.writePoint(point)
 writeApi
     .close()
     .then(() => {
@@ -392,12 +565,128 @@ $writeApi->write($point, WritePrecision::S, $bucket, $org);`,
 $writeApi->write($dataArray, WritePrecision::S, $bucket, $org);`,
 }
 
+export const clientKotlinLibrary = {
+  id: 'kotlin',
+  name: 'Kotlin',
+  url:
+    'https://github.com/influxdata/influxdb-client-java/tree/master/client-kotlin',
+  image: KotlinLogo,
+  buildWithMavenCodeSnippet: `<dependency>
+  <groupId>com.influxdb</groupId>
+  <artifactId>influxdb-client-kotlin</artifactId>
+  <version>1.8.0</version>
+</dependency>`,
+  buildWithGradleCodeSnippet: `dependencies {
+  compile "com.influxdb:influxdb-client-kotlin:1.8.0"
+}`,
+  initializeClientCodeSnippet: `package example
+
+import com.influxdb.client.kotlin.InfluxDBClientKotlinFactory
+import kotlinx.coroutines.channels.consumeEach
+import kotlinx.coroutines.channels.filter
+import kotlinx.coroutines.channels.take
+import kotlinx.coroutines.runBlocking
+
+fun main() = runBlocking {
+
+    // You can generate a Token from the "Tokens Tab" in the UI
+    val token = "<%= token %>"
+    val org = "<%= org %>"
+    val bucket = "<%= bucket %>"
+
+    val client = InfluxDBClientKotlinFactory.create("<%= server %>", token.toCharArray(), org)
+}`,
+  executeQueryCodeSnippet: `val query = ("from(bucket: \\"$bucket\\")"
+  + " |> range(start: -1d)"
+  + " |> filter(fn: (r) => (r[\\"_measurement\\"] == \\"cpu\\" and r[\\"_field\\"] == \\"usage_system\\"))")
+
+// Result is returned as a stream
+val results = client.getQueryKotlinApi().query(query)
+
+// Example of additional result stream processing on client side
+results
+  // filter on client side using \`filter\` built-in operator
+  .filter { "cpu0" == it.getValueByKey("cpu") }
+  // take first 20 records
+  .take(20)
+  // print results
+  .consumeEach { println("Measurement: $\{it.measurement}, value: $\{it.value}") }
+  
+client.close()`,
+}
+
+export const clientScalaLibrary = {
+  id: 'scala',
+  name: 'Scala',
+  url:
+    'https://github.com/influxdata/influxdb-client-java/tree/master/client-scala',
+  image: ScalaLogo,
+  buildWithSBTCodeSnippet: `libraryDependencies += "com.influxdb" % "influxdb-client-scala" % "1.8.0"`,
+  buildWithMavenCodeSnippet: `<dependency>
+  <groupId>com.influxdb</groupId>
+  <artifactId>influxdb-client-scala</artifactId>
+  <version>1.8.0</version>
+</dependency>`,
+  buildWithGradleCodeSnippet: `dependencies {
+  compile "com.influxdb:influxdb-client-scala:1.8.0"
+}`,
+  initializeClientCodeSnippet: `package example
+
+import akka.actor.ActorSystem
+import akka.stream.scaladsl.Sink
+import com.influxdb.client.scala.InfluxDBClientScalaFactory
+import com.influxdb.query.FluxRecord
+
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+
+object InfluxDB2ScalaExample {
+
+  implicit val system: ActorSystem = ActorSystem("it-tests")
+
+  def main(args: Array[String]): Unit = {
+
+    // You can generate a Token from the "Tokens Tab" in the UI
+    val token = "<%= token %>"
+    val org = "<%= org %>"
+    val bucket = "<%= bucket %>"
+
+    val client = InfluxDBClientScalaFactory.create("<%= server %>", token.toCharArray, org)
+  }
+}`,
+  executeQueryCodeSnippet: `val query = (s"""from(bucket: "$bucket")"""
+  + " |> range(start: -1d)"
+  + " |> filter(fn: (r) => (r[\\"_measurement\\"] == \\"cpu\\" and r[\\"_field\\"] == \\"usage_system\\"))")
+
+// Result is returned as a stream
+val results = client.getQueryScalaApi().query(query)
+
+// Example of additional result stream processing on client side
+val sink = results
+  // filter on client side using \`filter\` built-in operator
+  .filter(it => "cpu0" == it.getValueByKey("cpu"))
+  // take first 20 records
+  .take(20)
+  // print results
+  .runWith(Sink.foreach[FluxRecord](it => println(s"Measurement: $\{it.getMeasurement}, value: $\{it.getValue}")
+  ))
+
+// wait to finish
+Await.result(sink, Duration.Inf)
+
+client.close()
+system.terminate()`,
+}
+
 export const clientLibraries: ClientLibrary[] = [
+  clientArduinoLibrary,
   clientCSharpLibrary,
   clientGoLibrary,
   clientJavaLibrary,
   clientJSLibrary,
+  clientKotlinLibrary,
   clientPHPLibrary,
   clientPythonLibrary,
   clientRubyLibrary,
+  clientScalaLibrary,
 ]

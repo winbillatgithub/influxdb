@@ -1,38 +1,23 @@
-import React, {FC, useContext, useCallback, createElement, useMemo} from 'react'
-import {PipeContextProps, PipeData} from 'src/notebooks'
-import Pipe from 'src/notebooks/components/Pipe'
+// Libraries
+import React, {FC, useContext, useCallback} from 'react'
+
+// Contexts
 import {NotebookContext} from 'src/notebooks/context/notebook'
-import NotebookPanel from 'src/notebooks/components/panel/NotebookPanel'
+import {ScrollContext} from 'src/notebooks/context/scroll'
 
-interface NotebookPipeProps {
-  index: number
-  data: PipeData
-  onUpdate: (index: number, pipe: PipeData) => void
-}
-
-const NotebookPipe: FC<NotebookPipeProps> = ({index, data, onUpdate}) => {
-  const panel: FC<PipeContextProps> = useMemo(
-    () => props => {
-      const _props = {
-        ...props,
-        index,
-      }
-
-      return createElement(NotebookPanel, _props)
-    },
-    [index]
-  )
-
-  const _onUpdate = (data: PipeData) => {
-    onUpdate(index, data)
-  }
-
-  return <Pipe data={data} onUpdate={_onUpdate} Context={panel} />
-}
+// Components
+import NotebookPipe from 'src/notebooks/components/NotebookPipe'
+import EmptyPipeList from 'src/notebooks/components/EmptyPipeList'
+import {DapperScrollbars} from '@influxdata/clockface'
 
 const PipeList: FC = () => {
-  const {id, pipes, updatePipe} = useContext(NotebookContext)
+  const {id, pipes, updatePipe, results, meta} = useContext(NotebookContext)
+  const {scrollPosition} = useContext(ScrollContext)
   const update = useCallback(updatePipe, [id])
+
+  if (!pipes.length) {
+    return <EmptyPipeList />
+  }
 
   const _pipes = pipes.map((_, index) => {
     return (
@@ -41,11 +26,22 @@ const PipeList: FC = () => {
         index={index}
         data={pipes[index]}
         onUpdate={update}
+        results={results[index]}
+        loading={meta[index].loading}
       />
     )
   })
 
-  return <>{_pipes}</>
+  return (
+    <DapperScrollbars
+      className="notebook-main"
+      autoHide={true}
+      noScrollX={true}
+      scrollTop={scrollPosition}
+    >
+      {_pipes}
+    </DapperScrollbars>
+  )
 }
 
 export default PipeList

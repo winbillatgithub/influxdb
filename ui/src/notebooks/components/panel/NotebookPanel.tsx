@@ -1,5 +1,13 @@
 // Libraries
-import React, {FC, useContext, useCallback, ReactNode} from 'react'
+import React, {
+  FC,
+  useContext,
+  useCallback,
+  useEffect,
+  ReactNode,
+  MouseEvent,
+  useRef,
+} from 'react'
 import classnames from 'classnames'
 
 // Components
@@ -8,6 +16,7 @@ import {
   ComponentSize,
   AlignItems,
   JustifyContent,
+  ClickOutside,
 } from '@influxdata/clockface'
 import RemovePanelButton from 'src/notebooks/components/panel/RemovePanelButton'
 import PanelVisibilityToggle from 'src/notebooks/components/panel/PanelVisibilityToggle'
@@ -18,7 +27,7 @@ import NotebookPanelTitle from 'src/notebooks/components/panel/NotebookPanelTitl
 import {PipeContextProps} from 'src/notebooks'
 
 // Contexts
-import {NotebookContext} from 'src/notebooks/context/notebook'
+import {NotebookContext, PipeMeta} from 'src/notebooks/context/notebook'
 
 export interface Props extends PipeContextProps {
   index: number
@@ -33,7 +42,6 @@ const NotebookPanelHeader: FC<HeaderProps> = ({index, controls}) => {
   const {pipes, removePipe, movePipe} = useContext(NotebookContext)
   const canBeMovedUp = index > 0
   const canBeMovedDown = index < pipes.length - 1
-  const canBeRemoved = index !== 0
 
   const moveUp = useCallback(
     canBeMovedUp ? () => movePipe(index, index - 1) : null,
@@ -43,10 +51,7 @@ const NotebookPanelHeader: FC<HeaderProps> = ({index, controls}) => {
     canBeMovedDown ? () => movePipe(index, index + 1) : null,
     [index, pipes]
   )
-  const remove = useCallback(canBeRemoved ? () => removePipe(index) : null, [
-    index,
-    pipes,
-  ])
+  const remove = useCallback(() => removePipe(index), [index, pipes])
 
   return (
     <div className="notebook-panel--header">
@@ -75,20 +80,45 @@ const NotebookPanelHeader: FC<HeaderProps> = ({index, controls}) => {
 }
 
 const NotebookPanel: FC<Props> = ({index, children, controls}) => {
-  const {meta} = useContext(NotebookContext)
+  const {meta, updateMeta} = useContext(NotebookContext)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const isVisible = meta[index].visible
+  const isFocused = meta[index].focus
+
+  useEffect(() => {
+    updateMeta(index, {panelRef} as PipeMeta)
+  }, [])
 
   const panelClassName = classnames('notebook-panel', {
     [`notebook-panel__visible`]: isVisible,
     [`notebook-panel__hidden`]: !isVisible,
+    'notebook-panel__focus': isFocused,
   })
 
+  const updatePanelFocus = useCallback(
+    (focus: boolean): void => {
+      updateMeta(index, {focus} as PipeMeta)
+    },
+    [index, meta]
+  )
+
+  const handleClick = (e: MouseEvent<HTMLDivElement>): void => {
+    e.stopPropagation()
+    updatePanelFocus(true)
+  }
+
+  const handleClickOutside = (): void => {
+    updatePanelFocus(false)
+  }
+
   return (
-    <div className={panelClassName}>
-      <NotebookPanelHeader index={index} controls={controls} />
-      <div className="notebook-panel--body">{children}</div>
-    </div>
+    <ClickOutside onClickOutside={handleClickOutside}>
+      <div className={panelClassName} onClick={handleClick} ref={panelRef}>
+        <NotebookPanelHeader index={index} controls={controls} />
+        <div className="notebook-panel--body">{children}</div>
+      </div>
+    </ClickOutside>
   )
 }
 

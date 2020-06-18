@@ -15,6 +15,49 @@ commands:
             sh -s -- --default-toolchain stable -y
             echo 'source $HOME/.cargo/env' >> $BASH_ENV
 
+  install_release_tools:
+    description: >
+      This will install the cross compilers necessary to build release binaries.
+    steps:
+      - run:
+          name: Install linux cross compilers
+          command: >
+            sudo apt-get install -y --no-install-recommends
+            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+      - run:
+          name: Install macOS cross compilers
+          command: |
+            sudo apt-get install -y --no-install-recommends \
+              cmake patch libxml2-dev libssl-dev zlib1g-dev
+            sudo mkdir -p /opt/osxcross
+            cd /opt
+            sudo git clone https://github.com/tpoechtrager/osxcross.git
+            cd osxcross
+            sudo git checkout c2ad5e859d12a295c3f686a15bd7181a165bfa82
+            sudo curl -L -o \
+              ./tarballs/MacOSX10.11.sdk.tar.xz \
+              https://macos-sdks.s3.amazonaws.com/MacOSX10.11.sdk.tar.xz
+            sudo UNATTENDED=1 PORTABLE=true ./build.sh
+      - run:
+          name: Install additional rust targets
+          command: |
+            rustup target add aarch64-unknown-linux-gnu \
+                              arm-unknown-linux-gnueabihf \
+                              armv7-unknown-linux-gnueabihf \
+                              x86_64-apple-darwin
+            echo 'export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc' >> $HOME/.cargo/env
+            echo 'export CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc' >> $HOME/.cargo/env
+            echo 'export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc' >> $HOME/.cargo/env
+            echo 'export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> $HOME/.cargo/env
+            echo 'export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/opt/osxcross/target/bin/o64-clang' >> $HOME/.cargo/env
+      - run:
+          name: Install pkg-config wrapper
+          command: go build -o /go/bin/pkg-config github.com/influxdata/pkg-config
+      - run:
+          name: Copy xcc wrapper script for cross compilation
+          command: install xcc.sh /go/bin/xcc
+
 jobs:
   litmus_daily:
     machine: true
@@ -165,7 +208,7 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-            - 'yarn-cached-packages-{{ checksum "yarn.lock" }}'
+            - 'yarn-cached-packages-{{ checksum "ui/yarn.lock" }}'
           name: "Restore Yarn Package Cache"
       - run:
           command: |
@@ -188,7 +231,7 @@ jobs:
           path: coverage
           destination: raw-test-output
       - save_cache:
-          key: 'yarn-cached-packages-{{ checksum "yarn.lock" }}'
+          key: 'yarn-cached-packages-{{ checksum "ui/yarn.lock" }}'
           name: "Save Yarn Package Cache"
           paths:
             - ~/.cache/yarn
@@ -201,7 +244,7 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-            - 'yarn-cached-packages-{{ checksum "yarn.lock" }}'
+            - 'yarn-cached-packages-{{ checksum "ui/yarn.lock" }}'
           name: "Restore Yarn Package Cache"
       - run:
           command: |
@@ -218,7 +261,7 @@ jobs:
             TESTFILES=$(circleci tests glob "src/**/*.ts*" "cypress/**/*.ts*" | circleci tests split --split-by=filesize)
             yarn eslint:circleci $TESTFILES
       - save_cache:
-          key: 'yarn-cached-packages-{{ checksum "yarn.lock" }}'
+          key: 'yarn-cached-packages-{{ checksum "ui/yarn.lock" }}'
           name: "Save Yarn Package Cache"
           paths:
             - ~/.cache/yarn
@@ -257,7 +300,7 @@ jobs:
             # filter internal/promqltests because it has special go.mod
             TESTFILES=$(go list ./... | grep -v internal/promqltests | circleci tests split --split-by=timings)
             echo $TESTFILES
-            GOTRACEBACK=all GO111MODULE=on FLUX_PARSER_TYPE=rust CGO_LDFLAGS="$(cat .cgo_ldflags)" gotestsum --format standard-quiet --junitfile /tmp/test-results/gotestsum.xml -- -race -count=1 -tags 'libflux' $TESTFILES
+            GOTRACEBACK=all GO111MODULE=on ./env gotestsum --format standard-quiet --junitfile /tmp/test-results/gotestsum.xml -- -race -count=1 $TESTFILES
       - save_cache:
           name: Saving GOCACHE
           key: influxdb-gocache-{{ .Branch }}-{{ .Revision }}
@@ -352,7 +395,7 @@ jobs:
       - run: make checktidy
       - run: GO111MODULE=on go mod vendor # staticcheck looks in vendor for dependencies.
       - run: GO111MODULE=on go install honnef.co/go/tools/cmd/staticcheck # Install staticcheck from the version we specify in go.mod.
-      - run: GO111MODULE=on staticcheck ./...
+      - run: GO111MODULE=on ./env staticcheck ./...
       - save_cache:
           name: Saving GOCACHE
           key: influxdb-gocache-{{ .Branch }}-{{ .Revision }}
@@ -426,6 +469,8 @@ jobs:
           name: "Docker Login"
           command: docker login -u "$QUAY_USER" -p $QUAY_PASS quay.io
       - run: sudo apt-get install -y bzr
+      - install_rust_compiler
+      - install_release_tools
       - run: make protoc # installs protoc
       - run:
           name: "Build nightly"
@@ -461,6 +506,8 @@ jobs:
           name: "Docker Login"
           command: docker login -u "$QUAY_USER" -p $QUAY_PASS quay.io
       - run: sudo apt-get install -y bzr
+      - install_rust_compiler
+      - install_release_tools
       - run: make protoc # installs protoc
       - run:
           name: "Build release"
@@ -509,6 +556,7 @@ workflows:
             branches:
               only:
                 - master
+                - feat/use-algo-w
     jobs:
       - gotest
       - golint
@@ -522,7 +570,9 @@ workflows:
             - jslint
           filters:
             branches:
-              only: master
+              only:
+                - master
+                - feat/use-algo-w
       - litmus_nightly:
           requires:
             - deploy-nightly

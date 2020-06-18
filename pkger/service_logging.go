@@ -61,6 +61,23 @@ func (s *loggingMW) DeleteStack(ctx context.Context, identifiers struct{ OrgID, 
 	return s.next.DeleteStack(ctx, identifiers)
 }
 
+func (s *loggingMW) ExportStack(ctx context.Context, orgID, stackID influxdb.ID) (pkg *Pkg, err error) {
+	defer func(start time.Time) {
+		if err == nil {
+			return
+		}
+
+		s.logger.Error(
+			"failed to export stack",
+			zap.Error(err),
+			zap.Stringer("orgID", orgID),
+			zap.Stringer("stackID", stackID),
+			zap.Duration("took", time.Since(start)),
+		)
+	}(time.Now())
+	return s.next.ExportStack(ctx, orgID, stackID)
+}
+
 func (s *loggingMW) ListStacks(ctx context.Context, orgID influxdb.ID, f ListFilter) (stacks []Stack, err error) {
 	defer func(start time.Time) {
 		if err == nil {
@@ -84,6 +101,45 @@ func (s *loggingMW) ListStacks(ctx context.Context, orgID influxdb.ID, f ListFil
 	return s.next.ListStacks(ctx, orgID, f)
 }
 
+func (s *loggingMW) ReadStack(ctx context.Context, id influxdb.ID) (st Stack, err error) {
+	defer func(start time.Time) {
+		if err != nil {
+			s.logger.Error("failed to read stack",
+				zap.Error(err),
+				zap.String("id", id.String()),
+				zap.Duration("took", time.Since(start)),
+			)
+			return
+		}
+	}(time.Now())
+	return s.next.ReadStack(ctx, id)
+}
+
+func (s *loggingMW) UpdateStack(ctx context.Context, upd StackUpdate) (_ Stack, err error) {
+	defer func(start time.Time) {
+		if err != nil {
+			fields := []zap.Field{
+				zap.Error(err),
+				zap.String("id", upd.ID.String()),
+			}
+			if upd.Name != nil {
+				fields = append(fields, zap.String("name", *upd.Name))
+			}
+			if upd.Description != nil {
+				fields = append(fields, zap.String("desc", *upd.Description))
+			}
+			fields = append(fields,
+				zap.Strings("urls", upd.URLs),
+				zap.Duration("took", time.Since(start)),
+			)
+
+			s.logger.Error("failed to update stack", fields...)
+			return
+		}
+	}(time.Now())
+	return s.next.UpdateStack(ctx, upd)
+}
+
 func (s *loggingMW) CreatePkg(ctx context.Context, setters ...CreatePkgSetFn) (pkg *Pkg, err error) {
 	defer func(start time.Time) {
 		dur := zap.Duration("took", time.Since(start))
@@ -96,7 +152,7 @@ func (s *loggingMW) CreatePkg(ctx context.Context, setters ...CreatePkgSetFn) (p
 	return s.next.CreatePkg(ctx, setters...)
 }
 
-func (s *loggingMW) DryRun(ctx context.Context, orgID, userID influxdb.ID, pkg *Pkg, opts ...ApplyOptFn) (sum Summary, diff Diff, err error) {
+func (s *loggingMW) DryRun(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (impact PkgImpactSummary, err error) {
 	defer func(start time.Time) {
 		dur := zap.Duration("took", time.Since(start))
 		if err != nil {
@@ -114,17 +170,17 @@ func (s *loggingMW) DryRun(ctx context.Context, orgID, userID influxdb.ID, pkg *
 			o(&opt)
 		}
 
-		fields := s.summaryLogFields(sum)
+		fields := s.summaryLogFields(impact.Summary)
 		if opt.StackID != 0 {
 			fields = append(fields, zap.Stringer("stackID", opt.StackID))
 		}
 		fields = append(fields, dur)
 		s.logger.Info("pkg dry run successful", fields...)
 	}(time.Now())
-	return s.next.DryRun(ctx, orgID, userID, pkg, opts...)
+	return s.next.DryRun(ctx, orgID, userID, opts...)
 }
 
-func (s *loggingMW) Apply(ctx context.Context, orgID, userID influxdb.ID, pkg *Pkg, opts ...ApplyOptFn) (sum Summary, diff Diff, err error) {
+func (s *loggingMW) Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (impact PkgImpactSummary, err error) {
 	defer func(start time.Time) {
 		dur := zap.Duration("took", time.Since(start))
 		if err != nil {
@@ -137,7 +193,7 @@ func (s *loggingMW) Apply(ctx context.Context, orgID, userID influxdb.ID, pkg *P
 			return
 		}
 
-		fields := s.summaryLogFields(sum)
+		fields := s.summaryLogFields(impact.Summary)
 
 		opt := applyOptFromOptFns(opts...)
 		if opt.StackID != 0 {
@@ -146,7 +202,7 @@ func (s *loggingMW) Apply(ctx context.Context, orgID, userID influxdb.ID, pkg *P
 		fields = append(fields, dur)
 		s.logger.Info("pkg apply successful", fields...)
 	}(time.Now())
-	return s.next.Apply(ctx, orgID, userID, pkg, opts...)
+	return s.next.Apply(ctx, orgID, userID, opts...)
 }
 
 func (s *loggingMW) summaryLogFields(sum Summary) []zap.Field {

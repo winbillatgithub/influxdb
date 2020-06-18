@@ -8,8 +8,10 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/bolt"
@@ -26,6 +28,12 @@ import (
 )
 
 const maxTCPConnections = 10
+
+var (
+	version = "dev"
+	commit  = "none"
+	date    = time.Now().UTC().Format(time.RFC3339)
+)
 
 func main() {
 	influxCmd := influxCmd()
@@ -44,7 +52,20 @@ func newHTTPClient() (*httpc.Client, error) {
 		return httpClient, nil
 	}
 
-	c, err := http.NewHTTPClient(flags.Host, flags.Token, flags.skipVerify)
+	userAgent := fmt.Sprintf(
+		"influx/%s (%s) Sha/%s Date/%s",
+		version, runtime.GOOS, commit, date,
+	)
+
+	opts := []httpc.ClientOptFn{
+		httpc.WithUserAgentHeader(userAgent),
+	}
+	// This is useful for forcing tracing on a given endpoint.
+	if flags.traceDebugID != "" {
+		opts = append(opts, httpc.WithHeader("jaeger-debug-id", flags.traceDebugID))
+	}
+
+	c, err := http.NewHTTPClient(flags.Host, flags.Token, flags.skipVerify, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +95,11 @@ func (o genericCLIOpts) newCmd(use string, runE func(*cobra.Command, []string) e
 		Args: cobra.NoArgs,
 		Use:  use,
 		RunE: runE,
+		FParseErrWhitelist: cobra.FParseErrWhitelist{
+			// allows for unknown flags, parser does not crap the bed
+			// when providing a flag that doesn't exist/match.
+			UnknownFlags: true,
+		},
 	}
 
 	canWrapRunE := runE != nil && o.runEWrapFn != nil
@@ -123,8 +149,9 @@ func runEMiddlware(mw cobraRunEMiddleware) genericCLIOptFn {
 
 type globalFlags struct {
 	config.Config
-	local      bool
-	skipVerify bool
+	local        bool
+	skipVerify   bool
+	traceDebugID string
 }
 
 var flags globalFlags
@@ -180,6 +207,12 @@ func (b *cmdInfluxBuilder) cmd(childCmdFns ...func(f *globalFlags, opt genericCL
 			Desc:       "HTTP address of Influx",
 			Persistent: true,
 		},
+		{
+			DestP:      &flags.traceDebugID,
+			Flag:       "trace-debug-id",
+			Hidden:     true,
+			Persistent: true,
+		},
 	}
 	fOpts.mustRegister(cmd)
 
@@ -213,8 +246,21 @@ func (b *cmdInfluxBuilder) cmd(childCmdFns ...func(f *globalFlags, opt genericCL
 
 	// completion command goes last, after the walk, so that all
 	// commands have every flag listed in the bash|zsh completions.
-	cmd.AddCommand(completionCmd(cmd))
+	cmd.AddCommand(
+		completionCmd(cmd),
+		cmdVersion(),
+	)
 	return cmd
+}
+
+func cmdVersion() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the influx CLI version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("Influx CLI %s (git: %s) build_date: %s\n", version, commit, date)
+		},
+	}
 }
 
 func influxCmd(opts ...genericCLIOptFn) *cobra.Command {
@@ -223,17 +269,20 @@ func influxCmd(opts ...genericCLIOptFn) *cobra.Command {
 		cmdAuth,
 		cmdBackup,
 		cmdBucket,
+		cmdConfig,
 		cmdDelete,
+		cmdExport,
 		cmdOrganization,
 		cmdPing,
-		cmdPkg,
-		cmdConfig,
 		cmdQuery,
-		cmdTranspile,
 		cmdREPL,
 		cmdSecret,
 		cmdSetup,
+		cmdStack,
 		cmdTask,
+		cmdTemplate,
+		cmdApply,
+		cmdTranspile,
 		cmdUser,
 		cmdWrite,
 	)

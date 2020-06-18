@@ -1,4 +1,47 @@
-## v2.0.0-beta.11 [unreleased]
+## v2.0.0-beta.13 [unreleased]
+
+### Features
+
+1. [18387](https://github.com/influxdata/influxdb/pull/18387): Integrate query cancellation after queries have been submitted
+1. [18515](https://github.com/influxdata/influxdb/pull/18515): Extend templates with the source file|url|reader.
+1. [18539](https://github.com/influxdata/influxdb/pull/18539): Collect stats on installed influxdata community template usage.
+1. [18541](https://github.com/influxdata/influxdb/pull/18541): Pkger allow raw github.com host URLs for yaml|json|jsonnet URLs
+1. [18546](https://github.com/influxdata/influxdb/pull/18546): Influx allow for files to be remotes for all template commands
+1. [18560](https://github.com/influxdata/influxdb/pull/18560): Extend stacks API with update capability
+1. [18568](https://github.com/influxdata/influxdb/pull/18568): Add support for config files to influxd and any cli.NewCommand use case
+1. [18573](https://github.com/influxdata/influxdb/pull/18573): Extend influx stacks cmd with new influx stacks update cmd
+
+## v2.0.0-beta.12 [2020-06-12]
+
+### Features
+
+1. [18279](https://github.com/influxdata/influxdb/pull/18279): Make all pkg applications stateful via stacks
+1. [18322](https://github.com/influxdata/influxdb/pull/18322): Add ability to export a stack's existing (as they are in the platform) resource state as a pkg
+1. [18334](https://github.com/influxdata/influxdb/pull/18334): Update influx pkg commands with improved usage and examples in long form.
+1. [18344](https://github.com/influxdata/influxdb/pull/18344): Extend influx CLI with version and User-Agent.
+1. [18355](https://github.com/influxdata/influxdb/pull/18355): Integrate RedirectTo functionality so CLOUD users now get navigated back to the originally linked page after login
+1. [18392](https://github.com/influxdata/influxdb/pull/18392): Consolidate pkg influx commands under templates. This removes some nesting of the CLI commands as part of that.
+1. [18400](https://github.com/influxdata/influxdb/pull/18400): Dashboards maintain sort order after navigating away
+1. [18480](https://github.com/influxdata/influxdb/pull/18480): Allows tasks to open in new tabs
+1. [18553](https://github.com/influxdata/influxdb/pull/18553): Update usage and soften comparisons for kind matching on 'influx export --resourceType' cmd
+
+### Bug Fixes
+
+1. [18331](https://github.com/influxdata/influxdb/pull/18331): Support organization name in addition to ID in DBRP operations
+1. [18335](https://github.com/influxdata/influxdb/pull/18335): Disable failing when providing an unexpected error to influx CLI
+1. [18345](https://github.com/influxdata/influxdb/pull/18345): Have influx delete cmd respect the config
+1. [18385](https://github.com/influxdata/influxdb/pull/18385): Store initialization for pkger enforced on reads
+1. [18434](https://github.com/influxdata/influxdb/pull/18434): Backfill missing fillColumns field for histograms in pkger
+1. [18471](https://github.com/influxdata/influxdb/pull/18471): Notifies the user how to escape presentation mode when the feature is toggled
+
+### UI Improvements
+
+1. [18319](https://github.com/influxdata/influxdb/pull/18319): Display bucket ID in bucket list and enable 1 click copying
+1. [18361](https://github.com/influxdata/influxdb/pull/18361): Tokens list is now consistent with the other resource lists
+1. [18346](https://github.com/influxdata/influxdb/pull/18346): Reduce the number of variables being hydrated when toggling variables
+1. [18447](https://github.com/influxdata/influxdb/pull/18447): Redesign dashboard cell loading indicator to be more obvious
+
+## v2.0.0-beta.11 [2020-05-26]
 
 ### Features
 
@@ -6,6 +49,7 @@
 1. [18040](https://github.com/influxdata/influxdb/pull/18040): Allow for min OR max y-axis visualization settings rather than min AND max
 1. [17764](https://github.com/influxdata/influxdb/pull/17764): Add CSV to line protocol conversion library
 1. [18059](https://github.com/influxdata/influxdb/pull/18059): Make the dropdown width adjustable
+1. [18173](https://github.com/influxdata/influxdb/pull/18173): Add version to /health response
 
 ### Bug Fixes
 
@@ -14,8 +58,6 @@
 1. [18071](https://github.com/influxdata/influxdb/pull/18071): Fixed issue that was causing variable selections to hydrate all variable values
 1. [18016](https://github.com/influxdata/influxdb/pull/18016): Remove the fancy scrollbars
 1. [18171](https://github.com/influxdata/influxdb/pull/18171): Check status now displaying warning if loading a large amount
-
-### UI Improvements
 
 ## v2.0.0-beta.10 [2020-05-07]
 

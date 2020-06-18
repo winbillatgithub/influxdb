@@ -12,6 +12,7 @@ import (
 	"github.com/influxdata/influxdb/v2/kit/feature"
 	"github.com/influxdata/influxdb/v2/kit/prom"
 	kithttp "github.com/influxdata/influxdb/v2/kit/transport/http"
+	"github.com/influxdata/influxdb/v2/models"
 	"github.com/influxdata/influxdb/v2/query"
 	"github.com/influxdata/influxdb/v2/storage"
 	"github.com/prometheus/client_golang/prometheus"
@@ -76,6 +77,7 @@ type APIBackend struct {
 	PasswordsService                influxdb.PasswordsService
 	InfluxQLService                 query.ProxyQueryService
 	FluxService                     query.ProxyQueryService
+	FluxLanguageService             influxdb.FluxLanguageService
 	TaskService                     influxdb.TaskService
 	CheckService                    influxdb.CheckService
 	TelegrafService                 influxdb.TelegrafConfigStore
@@ -120,12 +122,11 @@ func WithResourceHandler(resHandler kithttp.ResourceHandler) APIHandlerOptFn {
 // NewAPIHandler constructs all api handlers beneath it and returns an APIHandler
 func NewAPIHandler(b *APIBackend, opts ...APIHandlerOptFn) *APIHandler {
 	h := &APIHandler{
-		Router: newBaseChiRouter(b.HTTPErrorHandler),
+		Router: NewBaseChiRouter(kithttp.NewAPI(kithttp.WithLog(b.Logger))),
 	}
 
 	noAuthUserResourceMappingService := b.UserResourceMappingService
 	b.UserResourceMappingService = authorizer.NewURMService(b.OrgLookupService, b.UserResourceMappingService)
-	b.LabelService = authorizer.NewLabelServiceWithOrg(b.LabelService, b.OrgLookupService)
 
 	h.Mount("/api/v2", serveLinksHandler(b.HTTPErrorHandler))
 
@@ -154,8 +155,6 @@ func NewAPIHandler(b *APIBackend, opts ...APIHandlerOptFn) *APIHandler {
 	fluxBackend := NewFluxBackend(b.Logger.With(zap.String("handler", "query")), b)
 	h.Mount(prefixQuery, NewFluxHandler(b.Logger, fluxBackend))
 
-	h.Mount(prefixLabels, NewLabelHandler(b.Logger, b.LabelService, b.HTTPErrorHandler))
-
 	notificationEndpointBackend := NewNotificationEndpointBackend(b.Logger.With(zap.String("handler", "notificationEndpoint")), b)
 	notificationEndpointBackend.NotificationEndpointService = authorizer.NewNotificationEndpointService(b.NotificationEndpointService,
 		b.UserResourceMappingService, b.OrganizationService)
@@ -165,11 +164,6 @@ func NewAPIHandler(b *APIBackend, opts ...APIHandlerOptFn) *APIHandler {
 	notificationRuleBackend.NotificationRuleStore = authorizer.NewNotificationRuleStore(b.NotificationRuleStore,
 		b.UserResourceMappingService, b.OrganizationService)
 	h.Mount(prefixNotificationRules, NewNotificationRuleHandler(b.Logger, notificationRuleBackend))
-
-	orgBackend := NewOrgBackend(b.Logger.With(zap.String("handler", "org")), b)
-	orgBackend.OrganizationService = authorizer.NewOrgService(b.OrganizationService)
-	orgBackend.SecretService = authorizer.NewSecretService(b.SecretService)
-	h.Mount(prefixOrganizations, NewOrgHandler(b.Logger, orgBackend))
 
 	scraperBackend := NewScraperBackend(b.Logger.With(zap.String("handler", "scraper")), b)
 	scraperBackend.ScraperStorageService = authorizer.NewScraperTargetStoreService(b.ScraperTargetStoreService,
@@ -195,12 +189,6 @@ func NewAPIHandler(b *APIBackend, opts ...APIHandlerOptFn) *APIHandler {
 	h.Mount(prefixTelegrafPlugins, NewTelegrafHandler(b.Logger, telegrafBackend))
 	h.Mount(prefixTelegraf, NewTelegrafHandler(b.Logger, telegrafBackend))
 
-	userBackend := NewUserBackend(b.Logger.With(zap.String("handler", "user")), b)
-	userBackend.UserService = authorizer.NewUserService(b.UserService)
-	userBackend.PasswordsService = authorizer.NewPasswordService(b.PasswordsService)
-	userHandler := NewUserHandler(b.Logger, userBackend)
-	h.Mount(prefixMe, userHandler)
-	h.Mount(prefixUsers, userHandler)
 	h.Mount("/api/v2/flags", b.FlagsHandler)
 
 	variableBackend := NewVariableBackend(b.Logger.With(zap.String("handler", "variable")), b)
@@ -211,14 +199,16 @@ func NewAPIHandler(b *APIBackend, opts ...APIHandlerOptFn) *APIHandler {
 	backupBackend.BackupService = authorizer.NewBackupService(backupBackend.BackupService)
 	h.Mount(prefixBackup, NewBackupHandler(backupBackend))
 
-	h.Mount(dbrp.PrefixDBRP, dbrp.NewHTTPHandler(b.Logger, b.DBRPService))
+	h.Mount(dbrp.PrefixDBRP, dbrp.NewHTTPHandler(b.Logger, b.DBRPService, b.OrganizationService))
 
 	writeBackend := NewWriteBackend(b.Logger.With(zap.String("handler", "write")), b)
 	h.Mount(prefixWrite, NewWriteHandler(b.Logger, writeBackend,
 		WithMaxBatchSizeBytes(b.MaxBatchSizeBytes),
-		WithParserMaxBytes(b.WriteParserMaxBytes),
-		WithParserMaxLines(b.WriteParserMaxLines),
-		WithParserMaxValues(b.WriteParserMaxValues),
+		WithParserOptions(
+			models.WithParserMaxBytes(b.WriteParserMaxBytes),
+			models.WithParserMaxLines(b.WriteParserMaxLines),
+			models.WithParserMaxValues(b.WriteParserMaxValues),
+		),
 	))
 
 	for _, o := range opts {

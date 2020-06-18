@@ -3,7 +3,7 @@ import React, {PureComponent, CSSProperties} from 'react'
 import _ from 'lodash'
 import {Grid} from 'react-virtualized'
 
-const ROW_HEIGHT = 27
+export const ROW_HEIGHT = 27
 const MIN_COLUMN_WIDTH = 150
 const TIME_COLUMN_WIDTH = 300
 
@@ -96,7 +96,12 @@ export default class extends PureComponent<Props, State> {
         className="raw-flux-data-table--cell"
         title={datum}
       >
-        <div className="raw-flux-data-table--cell-bg">{datum}</div>
+        <div
+          className="raw-flux-data-table--cell-bg"
+          data-testid={`raw-flux-data-table--cell ${datum}`}
+        >
+          {datum}
+        </div>
       </div>
     )
   }

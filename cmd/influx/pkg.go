@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -28,8 +29,20 @@ import (
 
 type pkgSVCsFn func() (pkger.SVC, influxdb.OrganizationService, error)
 
-func cmdPkg(f *globalFlags, opts genericCLIOpts) *cobra.Command {
-	return newCmdPkgBuilder(newPkgerSVC, opts).cmd()
+func cmdApply(f *globalFlags, opts genericCLIOpts) *cobra.Command {
+	return newCmdPkgBuilder(newPkgerSVC, opts).cmdApply()
+}
+
+func cmdExport(f *globalFlags, opts genericCLIOpts) *cobra.Command {
+	return newCmdPkgBuilder(newPkgerSVC, opts).cmdPkgExport()
+}
+
+func cmdStack(f *globalFlags, opts genericCLIOpts) *cobra.Command {
+	return newCmdPkgBuilder(newPkgerSVC, opts).cmdStacks()
+}
+
+func cmdTemplate(f *globalFlags, opts genericCLIOpts) *cobra.Command {
+	return newCmdPkgBuilder(newPkgerSVC, opts).cmdTemplate()
 }
 
 type cmdPkgBuilder struct {
@@ -82,21 +95,74 @@ func newCmdPkgBuilder(svcFn pkgSVCsFn, opts genericCLIOpts) *cmdPkgBuilder {
 	}
 }
 
-func (b *cmdPkgBuilder) cmd() *cobra.Command {
+func (b *cmdPkgBuilder) cmdApply() *cobra.Command {
 	cmd := b.cmdPkgApply()
-	cmd.AddCommand(
+
+	// all these commands are deprecated under the old pkg cmds.
+	// these are moving to root commands.
+	deprecatedCmds := []*cobra.Command{
 		b.cmdPkgExport(),
-		b.cmdPkgSummary(),
+		b.cmdTemplateSummary(),
+		b.cmdStackDeprecated(),
 		b.cmdPkgValidate(),
-		b.cmdStack(),
-	)
+	}
+	for i := range deprecatedCmds {
+		deprecatedCmds[i].Hidden = true
+	}
+
+	cmd.AddCommand(deprecatedCmds...)
 
 	return cmd
 }
 
 func (b *cmdPkgBuilder) cmdPkgApply() *cobra.Command {
-	cmd := b.newCmd("pkg", b.pkgApplyRunEFn, true)
-	cmd.Short = "Apply a pkg to create resources"
+	cmd := b.newCmd("apply", b.pkgApplyRunEFn, true)
+	cmd.Aliases = []string{"pkg"}
+	cmd.Short = "Apply a template to manage resources"
+	cmd.Long = `
+	The apply command applies InfluxDB template(s). Use the command to create new
+	resources via a declarative template. The apply command can consume templates
+	via file(s), url(s), stdin, or any combination of the 3. Each run of the apply
+	command ensures that all templates applied are applied in unison as a transaction.
+	If any unexpected errors are discovered then all side effects are rolled back.
+
+	Examples:
+		# Apply a template via a file
+		influx apply -f $PATH_TO_TEMPLATE/template.json
+
+		# Apply a stack that has associated templates. In this example the stack has a remote
+		# template associated with it.
+		influx apply --stack-id $STACK_ID
+
+		# Apply a template associated with a stack. Stacks make template application idempotent.
+		influx apply -f $PATH_TO_TEMPLATE/template.json --stack-id $STACK_ID
+
+		# Apply multiple template files together (mix of yaml and json)
+		influx apply \
+			-f $PATH_TO_TEMPLATE/template_1.json \
+			-f $PATH_TO_TEMPLATE/template_2.yml
+
+		# Apply a template from a url
+		influx apply -f https://raw.githubusercontent.com/influxdata/community-templates/master/docker/docker.yml
+
+		# Apply a template from STDIN
+		cat $TEMPLATE.json | influx apply --encoding json
+
+		# Applying a directory of templates, takes everything from provided directory
+		influx apply -f $PATH_TO_TEMPLATE_DIR
+
+		# Applying a directory of templates, recursively descending into child directories
+		influx apply -R -f $PATH_TO_TEMPLATE_DIR
+
+		# Applying directories from many sources, file and URL
+		influx apply -f $PATH_TO_TEMPLATE/template.yml -f $URL_TO_TEMPLATE
+
+	For information about finding and using InfluxDB templates, see
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/apply/.
+
+	For more templates created by the community, see
+	https://github.com/influxdata/community-templates.
+`
 
 	b.org.register(cmd, false)
 	b.registerPkgFileFlags(cmd)
@@ -106,8 +172,8 @@ func (b *cmdPkgBuilder) cmdPkgApply() *cobra.Command {
 	cmd.Flags().StringVar(&b.stackID, "stack-id", "", "Stack ID to associate pkg application")
 
 	b.applyOpts.secrets = []string{}
-	cmd.Flags().StringSliceVar(&b.applyOpts.secrets, "secret", nil, "Secrets to provide alongside the package; format should --secret=SECRET_KEY=SECRET_VALUE --secret=SECRET_KEY_2=SECRET_VALUE_2")
-	cmd.Flags().StringSliceVar(&b.applyOpts.envRefs, "env-ref", nil, "Environment references to provide alongside the package; format should --env-ref=REF_KEY=REF_VALUE --env-ref=REF_KEY_2=REF_VALUE_2")
+	cmd.Flags().StringSliceVar(&b.applyOpts.secrets, "secret", nil, "Secrets to provide alongside the template; format should --secret=SECRET_KEY=SECRET_VALUE --secret=SECRET_KEY_2=SECRET_VALUE_2")
+	cmd.Flags().StringSliceVar(&b.applyOpts.envRefs, "env-ref", nil, "Environment references to provide alongside the template; format should --env-ref=REF_KEY=REF_VALUE --env-ref=REF_KEY_2=REF_VALUE_2")
 
 	return cmd
 }
@@ -149,16 +215,17 @@ func (b *cmdPkgBuilder) pkgApplyRunEFn(cmd *cobra.Command, args []string) error 
 	}
 
 	opts := []pkger.ApplyOptFn{
+		pkger.ApplyWithPkg(pkg),
 		pkger.ApplyWithEnvRefs(providedEnvRefs),
 		pkger.ApplyWithStackID(stackID),
 	}
 
-	drySum, diff, err := svc.DryRun(context.Background(), influxOrgID, 0, pkg, opts...)
+	dryRunImpact, err := svc.DryRun(context.Background(), influxOrgID, 0, opts...)
 	if err != nil {
 		return err
 	}
 
-	providedSecrets := mapKeys(drySum.MissingSecrets, b.applyOpts.secrets)
+	providedSecrets := mapKeys(dryRunImpact.Summary.MissingSecrets, b.applyOpts.secrets)
 	if !isTTY {
 		const skipDefault = "$$skip-this-key$$"
 		for _, secretKey := range missingValKeys(providedSecrets) {
@@ -170,7 +237,7 @@ func (b *cmdPkgBuilder) pkgApplyRunEFn(cmd *cobra.Command, args []string) error 
 		}
 	}
 
-	if err := b.printPkgDiff(diff); err != nil {
+	if err := b.printPkgDiff(dryRunImpact.Diff); err != nil {
 		return err
 	}
 
@@ -183,18 +250,18 @@ func (b *cmdPkgBuilder) pkgApplyRunEFn(cmd *cobra.Command, args []string) error 
 		}
 	}
 
-	if b.applyOpts.force != "conflict" && isTTY && diff.HasConflicts() {
+	if b.applyOpts.force != "conflict" && isTTY && dryRunImpact.Diff.HasConflicts() {
 		return errors.New("package has conflicts with existing resources and cannot safely apply")
 	}
 
 	opts = append(opts, pkger.ApplyWithSecrets(providedSecrets))
 
-	summary, _, err := svc.Apply(context.Background(), influxOrgID, 0, pkg, opts...)
+	impact, err := svc.Apply(context.Background(), influxOrgID, 0, opts...)
 	if err != nil {
 		return err
 	}
 
-	b.printPkgSummary(summary)
+	b.printPkgSummary(impact.StackID, impact.Summary)
 
 	return nil
 }
@@ -202,9 +269,32 @@ func (b *cmdPkgBuilder) pkgApplyRunEFn(cmd *cobra.Command, args []string) error 
 func (b *cmdPkgBuilder) cmdPkgExport() *cobra.Command {
 	cmd := b.newCmd("export", b.pkgExportRunEFn, true)
 	cmd.Short = "Export existing resources as a package"
-	cmd.AddCommand(b.cmdPkgExportAll())
+	cmd.Long = `
+	The export command provides a mechanism to export existing resources to a
+	template. Each template resource kind is supported via flags.
 
-	cmd.Flags().StringVarP(&b.file, "file", "f", "", "output file for created pkg; defaults to std out if no file provided; the extension of provided file (.yml/.json) will dictate encoding")
+	Examples:
+		# export buckets by ID
+		influx export --buckets=$ID1,$ID2,$ID3
+
+		# export buckets, labels, and dashboards by ID
+		influx export \
+			--buckets=$BID1,$BID2,$BID3 \
+			--labels=$LID1,$LID2,$LID3 \
+			--dashboards=$DID1,$DID2,$DID3
+
+	All of the resources are supported via the examples provided above. Provide the
+	resource flag and then provide the IDs.
+
+	For information about exporting InfluxDB templates, see
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/export/
+`
+	cmd.AddCommand(
+		b.cmdPkgExportAll(),
+		b.cmdPkgExportStack(),
+	)
+
+	cmd.Flags().StringVarP(&b.file, "file", "f", "", "output file for created template; defaults to std out if no file provided; the extension of provided file (.yml/.json) will dictate encoding")
 	cmd.Flags().StringVar(&b.exportOpts.resourceType, "resource-type", "", "The resource type provided will be associated with all IDs via stdin.")
 	cmd.Flags().StringVar(&b.exportOpts.buckets, "buckets", "", "List of bucket ids comma separated")
 	cmd.Flags().StringVar(&b.exportOpts.checks, "checks", "", "List of check ids comma separated")
@@ -225,8 +315,6 @@ func (b *cmdPkgBuilder) pkgExportRunEFn(cmd *cobra.Command, args []string) error
 		return err
 	}
 
-	opts := []pkger.CreatePkgSetFn{}
-
 	resTypes := []struct {
 		kind   pkger.Kind
 		idStrs []string
@@ -241,6 +329,8 @@ func (b *cmdPkgBuilder) pkgExportRunEFn(cmd *cobra.Command, args []string) error
 		{kind: pkger.KindTelegraf, idStrs: strings.Split(b.exportOpts.telegrafs, ",")},
 		{kind: pkger.KindVariable, idStrs: strings.Split(b.exportOpts.variables, ",")},
 	}
+
+	var opts []pkger.CreatePkgSetFn
 	for _, rt := range resTypes {
 		newOpt, err := newResourcesToClone(rt.kind, rt.idStrs)
 		if err != nil {
@@ -250,12 +340,20 @@ func (b *cmdPkgBuilder) pkgExportRunEFn(cmd *cobra.Command, args []string) error
 	}
 
 	if b.exportOpts.resourceType == "" {
-		return b.writePkg(cmd.OutOrStdout(), pkgSVC, b.file, opts...)
+		return b.exportPkg(cmd.OutOrStdout(), pkgSVC, b.file, opts...)
 	}
 
-	kind := pkger.Kind(b.exportOpts.resourceType)
-	if err := kind.OK(); err != nil {
-		return errors.New("resource type must be one of bucket|dashboard|label|variable; got: " + b.exportOpts.resourceType)
+	resType := strings.ToLower(b.exportOpts.resourceType)
+	resKind := pkger.KindUnknown
+	for _, k := range pkger.Kinds() {
+		if strings.ToLower(string(k)) == resType {
+			resKind = k
+			break
+		}
+	}
+
+	if err := resKind.OK(); err != nil {
+		return errors.New("resource type is invalid; got: " + b.exportOpts.resourceType)
 	}
 
 	if stdin, err := b.inStdIn(); err == nil {
@@ -265,19 +363,52 @@ func (b *cmdPkgBuilder) pkgExportRunEFn(cmd *cobra.Command, args []string) error
 		}
 	}
 
-	resTypeOpt, err := newResourcesToClone(kind, args)
+	resTypeOpt, err := newResourcesToClone(resKind, args)
 	if err != nil {
 		return err
 	}
 
-	return b.writePkg(cmd.OutOrStdout(), pkgSVC, b.file, append(opts, resTypeOpt)...)
+	return b.exportPkg(cmd.OutOrStdout(), pkgSVC, b.file, append(opts, resTypeOpt)...)
 }
 
 func (b *cmdPkgBuilder) cmdPkgExportAll() *cobra.Command {
 	cmd := b.newCmd("all", b.pkgExportAllRunEFn, true)
 	cmd.Short = "Export all existing resources for an organization as a package"
+	cmd.Long = `
+	The export all command will export all resources for an organization. The
+	command also provides a mechanism to filter by label name or resource kind.
 
-	cmd.Flags().StringVarP(&b.file, "file", "f", "", "output file for created pkg; defaults to std out if no file provided; the extension of provided file (.yml/.json) will dictate encoding")
+	Examples:
+		# Export all resources for an organization
+		influx pkg export all --org $ORG_NAME
+
+		# Export all bucket resources
+		influx export all --org $ORG_NAME --filter=resourceKind=Bucket
+
+		# Export all resources associated with label Foo
+		influx export all --org $ORG_NAME --filter=labelName=Foo
+
+		# Export all bucket resources and filter by label Foo
+		influx export all --org $ORG_NAME \
+			--filter=resourceKind=Bucket \
+			--filter=labelName=Foo
+
+		# Export all bucket or dashboard resources and filter by label Foo.
+		# note: like filters are unioned and filter types are intersections.
+		#		This example will export a resource if it is a dashboard or
+		#		bucket and has an associated label of Foo.
+		influx export all --org $ORG_NAME \
+			--filter=resourceKind=Bucket \
+			--filter=resourceKind=Dashboard \
+			--filter=labelName=Foo
+
+	For information about exporting InfluxDB templates, see
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/export
+	and
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/export/all
+`
+
+	cmd.Flags().StringVarP(&b.file, "file", "f", "", "output file for created template; defaults to std out if no file provided; the extension of provided file (.yml/.json) will dictate encoding")
 	cmd.Flags().StringArrayVar(&b.filters, "filter", nil, "Filter exported resources by labelName or resourceKind (format: --filter=labelName=example)")
 
 	b.org.register(cmd, false)
@@ -324,21 +455,82 @@ func (b *cmdPkgBuilder) pkgExportAllRunEFn(cmd *cobra.Command, args []string) er
 		LabelNames:    labelNames,
 		ResourceKinds: resourceKinds,
 	})
-	return b.writePkg(cmd.OutOrStdout(), pkgSVC, b.file, orgOpt)
+	return b.exportPkg(cmd.OutOrStdout(), pkgSVC, b.file, orgOpt)
 }
 
-func (b *cmdPkgBuilder) cmdPkgSummary() *cobra.Command {
+func (b *cmdPkgBuilder) cmdPkgExportStack() *cobra.Command {
+	cmd := b.newCmd("stack $STACK_ID", b.pkgExportStackRunEFn, true)
+	cmd.Short = "Export all existing resources for associated with a stack as a template"
+	cmd.Long = `
+	The export stack command exports the resources associated with a stack as
+	they currently exist in the platform. All the same metadata.name fields will be
+	reused.
+
+	Example:
+		# Export by a stack
+		influx export stack $STACK_ID
+
+	For information about exporting InfluxDB templates, see
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/export
+	and
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/export/stack/
+`
+	cmd.Args = cobra.ExactValidArgs(1)
+
+	cmd.Flags().StringVarP(&b.file, "file", "f", "", "output file for created template; defaults to std out if no file provided; the extension of provided file (.yml/.json) will dictate encoding")
+	b.org.register(cmd, false)
+
+	return cmd
+}
+
+func (b *cmdPkgBuilder) pkgExportStackRunEFn(cmd *cobra.Command, args []string) error {
+	pkgSVC, orgSVC, err := b.svcFn()
+	if err != nil {
+		return err
+	}
+
+	stackID, err := influxdb.IDFromString(args[0])
+	if err != nil {
+		return err
+	}
+
+	orgID, err := b.org.getID(orgSVC)
+	if err != nil {
+		return err
+	}
+
+	pkg, err := pkgSVC.ExportStack(context.Background(), orgID, *stackID)
+	if err != nil {
+		return err
+	}
+
+	return b.writePkg(b.w, b.file, pkg)
+}
+
+func (b *cmdPkgBuilder) cmdTemplate() *cobra.Command {
+	cmd := b.newTemplateCmd("template")
+	cmd.Short = "Summarize the provided template"
+	cmd.AddCommand(b.cmdPkgValidate())
+	return cmd
+}
+
+func (b *cmdPkgBuilder) cmdTemplateSummary() *cobra.Command {
+	cmd := b.newTemplateCmd("summary")
+	cmd.Short = "Summarize the provided package"
+	return cmd
+}
+
+func (b *cmdPkgBuilder) newTemplateCmd(usage string) *cobra.Command {
 	runE := func(cmd *cobra.Command, args []string) error {
 		pkg, _, err := b.readPkg()
 		if err != nil {
 			return err
 		}
 
-		return b.printPkgSummary(pkg.Summary())
+		return b.printPkgSummary(0, pkg.Summary())
 	}
 
-	cmd := b.newCmd("summary", runE, false)
-	cmd.Short = "Summarize the provided package"
+	cmd := b.newCmd(usage, runE, false)
 
 	b.registerPkgFileFlags(cmd)
 	b.registerPkgPrintOpts(cmd)
@@ -356,14 +548,50 @@ func (b *cmdPkgBuilder) cmdPkgValidate() *cobra.Command {
 	}
 
 	cmd := b.newCmd("validate", runE, false)
-	cmd.Short = "Validate the provided package"
+	cmd.Short = "Validate the provided template"
 
 	b.registerPkgFileFlags(cmd)
 
 	return cmd
 }
 
-func (b *cmdPkgBuilder) cmdStack() *cobra.Command {
+func (b *cmdPkgBuilder) cmdStacks() *cobra.Command {
+	cmd := b.newCmdStackList("stacks")
+	cmd.Short = "List stack(s) and associated templates. Subcommands manage stacks."
+	cmd.Long = `
+	List stack(s) and associated templates. Subcommands manage stacks.
+
+	Examples:
+		# list all known stacks
+		influx stacks
+
+		# list stacks filtered by stack name
+		# output here are stacks that have match at least 1 name provided
+		influx stacks --stack-name=$STACK_NAME_1 --stack-name=$STACK_NAME_2
+
+		# list stacks filtered by stack id
+		# output here are stacks that have match at least 1 ids provided
+		influx stacks --stack-id=$STACK_ID_1 --stack-id=$STACK_ID_2
+		
+		# list stacks filtered by stack id or stack name
+		# output here are stacks that have match the id provided or
+		# matches of the name provided
+		influx stacks --stack-id=$STACK_ID --stack-name=$STACK_NAME
+
+	For information about Stacks and how they integrate with InfluxDB templates, see
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/stacks
+`
+
+	cmd.AddCommand(
+		b.cmdStackInit(),
+		b.cmdStackRemove(),
+		b.cmdStackUpdate(),
+	)
+	return cmd
+}
+
+// TODO(jsteenb2): nuke the deprecated command here after OSS beta13 release.
+func (b *cmdPkgBuilder) cmdStackDeprecated() *cobra.Command {
 	cmd := b.newCmd("stack", nil, false)
 	cmd.Short = "Stack management commands"
 	cmd.AddCommand(
@@ -377,10 +605,29 @@ func (b *cmdPkgBuilder) cmdStack() *cobra.Command {
 func (b *cmdPkgBuilder) cmdStackInit() *cobra.Command {
 	cmd := b.newCmd("init", b.stackInitRunEFn, true)
 	cmd.Short = "Initialize a stack"
+	cmd.Long = `
+	The stack init command creates a new stack to associated templates with. A
+	stack is used to make applying templates idempotent. When you apply a template
+	and associate it with a stack, the stack can manage the created/updated resources
+	from the template back to the platform. This enables a multitude of useful features.
+	Any associated template urls will be applied when applying templates via a stack.
+
+	Examples:
+		# Initialize a stack with a name and description
+		influx stack init -n $STACK_NAME -d $STACK_DESCRIPTION
+
+		# Initialize a stack with a name and urls to associate with stack.
+		influx stack init -n $STACK_NAME -u $PATH_TO_TEMPLATE
+
+	For information about how stacks work with InfluxDB templates, see
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/stacks/
+	and
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/stacks/init/
+`
 
 	cmd.Flags().StringVarP(&b.name, "stack-name", "n", "", "Name given to created stack")
 	cmd.Flags().StringVarP(&b.description, "stack-description", "d", "", "Description given to created stack")
-	cmd.Flags().StringArrayVarP(&b.urls, "package-url", "u", nil, "Package urls to associate with new stack")
+	cmd.Flags().StringArrayVarP(&b.urls, "template-url", "u", nil, "Template urls to associate with new stack")
 	registerPrintOptions(cmd, &b.hideHeaders, &b.json)
 
 	b.org.register(cmd, false)
@@ -410,35 +657,21 @@ func (b *cmdPkgBuilder) stackInitRunEFn(cmd *cobra.Command, args []string) error
 		return err
 	}
 
-	if b.json {
-		return b.writeJSON(stack)
-	}
-
-	tabW := b.newTabWriter()
-	defer tabW.Flush()
-
-	tabW.HideHeaders(b.hideHeaders)
-
-	tabW.WriteHeaders("ID", "OrgID", "Name", "Description", "URLs", "Created At")
-	tabW.Write(map[string]interface{}{
-		"ID":          stack.ID,
-		"OrgID":       stack.OrgID,
-		"Name":        stack.Name,
-		"Description": stack.Description,
-		"URLs":        stack.URLs,
-		"Created At":  stack.CreatedAt,
-	})
-
-	return nil
+	return b.writeStack(b.w, stack)
 }
 
 func (b *cmdPkgBuilder) cmdStackList() *cobra.Command {
-	cmd := b.newCmd("list [flags]", b.stackListRunEFn, true)
+	cmd := b.newCmdStackList("list")
 	cmd.Short = "List stack(s) and associated resources"
 	cmd.Aliases = []string{"ls"}
+	return cmd
+}
 
-	cmd.Flags().StringArrayVar(&b.stackIDs, "stack-id", nil, "Stack IDs to filter by")
-	cmd.Flags().StringArrayVar(&b.names, "stack-name", nil, "Stack names to filter by")
+func (b *cmdPkgBuilder) newCmdStackList(cmdName string) *cobra.Command {
+	usage := fmt.Sprintf("%s [flags]", cmdName)
+	cmd := b.newCmd(usage, b.stackListRunEFn, true)
+	cmd.Flags().StringArrayVar(&b.stackIDs, "stack-id", nil, "Stack ID to filter by")
+	cmd.Flags().StringArrayVar(&b.names, "stack-name", nil, "Stack name to filter by")
 	registerPrintOptions(cmd, &b.hideHeaders, &b.json)
 
 	b.org.register(cmd, false)
@@ -482,7 +715,7 @@ func (b *cmdPkgBuilder) stackListRunEFn(cmd *cobra.Command, args []string) error
 	defer tabW.Flush()
 
 	tabW.HideHeaders(b.hideHeaders)
-	tabW.WriteHeaders("ID", "OrgID", "Name", "Description", "Num Resources", "URLs", "Created At")
+	tabW.WriteHeaders("ID", "OrgID", "Name", "Description", "Num Resources", "Sources", "URLs", "Created At")
 
 	for _, stack := range stacks {
 		tabW.Write(map[string]interface{}{
@@ -491,6 +724,7 @@ func (b *cmdPkgBuilder) stackListRunEFn(cmd *cobra.Command, args []string) error
 			"Name":          stack.Name,
 			"Description":   stack.Description,
 			"Num Resources": len(stack.Resources),
+			"Sources":       stack.Sources,
 			"URLs":          stack.URLs,
 			"Created At":    stack.CreatedAt,
 		})
@@ -500,9 +734,9 @@ func (b *cmdPkgBuilder) stackListRunEFn(cmd *cobra.Command, args []string) error
 }
 
 func (b *cmdPkgBuilder) cmdStackRemove() *cobra.Command {
-	cmd := b.newCmd("remove [--stack-id=ID1 --stack-id=ID2]", b.stackRemoveRunEFn, true)
+	cmd := b.newCmd("rm [--stack-id=ID1 --stack-id=ID2]", b.stackRemoveRunEFn, true)
 	cmd.Short = "Remove a stack(s) and all associated resources"
-	cmd.Aliases = []string{"rm", "uninstall"}
+	cmd.Aliases = []string{"remove", "uninstall"}
 
 	cmd.Flags().StringArrayVar(&b.stackIDs, "stack-id", nil, "Stack IDs to be removed")
 	cmd.MarkFlagRequired("stack-id")
@@ -592,6 +826,83 @@ func (b *cmdPkgBuilder) stackRemoveRunEFn(cmd *cobra.Command, args []string) err
 	return nil
 }
 
+func (b *cmdPkgBuilder) cmdStackUpdate() *cobra.Command {
+	cmd := b.newCmd("update", b.stackUpdateRunEFn, true)
+	cmd.Short = "Update a stack"
+	cmd.Long = `
+	The stack update command updates a stack.
+
+	Examples:
+		# Update a stack with a name and description
+		influx stack update -i $STACK_ID -n $STACK_NAME -d $STACK_DESCRIPTION
+
+		# Update a stack with a name and urls to associate with stack.
+		influx stack update --stack-id $STACK_ID --stack-name $STACK_NAME --template-url $PATH_TO_TEMPLATE
+
+	For information about how stacks work with InfluxDB templates, see
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/stacks
+	and
+	https://v2.docs.influxdata.com/v2.0/reference/cli/influx/stacks/update/
+`
+
+	cmd.Flags().StringVarP(&b.stackID, "stack-id", "i", "", "ID of stack")
+	cmd.MarkFlagRequired("stack-id")
+	cmd.Flags().StringVarP(&b.name, "stack-name", "n", "", "Name for stack")
+	cmd.Flags().StringVarP(&b.description, "stack-description", "d", "", "Description for stack")
+	cmd.Flags().StringArrayVarP(&b.urls, "template-url", "u", nil, "Template urls to associate with stack")
+	registerPrintOptions(cmd, &b.hideHeaders, &b.json)
+
+	return cmd
+}
+
+func (b *cmdPkgBuilder) stackUpdateRunEFn(cmd *cobra.Command, args []string) error {
+	pkgSVC, _, err := b.svcFn()
+	if err != nil {
+		return err
+	}
+
+	stackID, err := influxdb.IDFromString(b.stackID)
+	if err != nil {
+		return ierror.Wrap(err, "required stack id is invalid")
+	}
+
+	stack, err := pkgSVC.UpdateStack(context.Background(), pkger.StackUpdate{
+		ID:          *stackID,
+		Name:        &b.name,
+		Description: &b.description,
+		URLs:        b.urls,
+	})
+	if err != nil {
+		return err
+	}
+
+	return b.writeStack(b.w, stack)
+}
+
+func (b *cmdPkgBuilder) writeStack(w io.Writer, stack pkger.Stack) error {
+	if b.json {
+		return b.writeJSON(stack)
+	}
+
+	tabW := b.newTabWriter()
+	defer tabW.Flush()
+
+	tabW.HideHeaders(b.hideHeaders)
+
+	tabW.WriteHeaders("ID", "OrgID", "Name", "Description", "Sources", "URLs", "Created At")
+	tabW.Write(map[string]interface{}{
+		"ID":          stack.ID,
+		"OrgID":       stack.OrgID,
+		"Name":        stack.Name,
+		"Description": stack.Description,
+		"Sources":     stack.Sources,
+		"URLs":        stack.URLs,
+		"Created At":  stack.CreatedAt,
+	})
+
+	return nil
+}
+
 func (b *cmdPkgBuilder) registerPkgPrintOpts(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&b.disableColor, "disable-color", "c", false, "Disable color in output")
 	cmd.Flags().BoolVar(&b.disableTableBorders, "disable-table-borders", false, "Disable table borders")
@@ -599,22 +910,27 @@ func (b *cmdPkgBuilder) registerPkgPrintOpts(cmd *cobra.Command) {
 }
 
 func (b *cmdPkgBuilder) registerPkgFileFlags(cmd *cobra.Command) {
-	cmd.Flags().StringSliceVarP(&b.files, "file", "f", nil, "Path to package file")
+	cmd.Flags().StringSliceVarP(&b.files, "file", "f", nil, "Path to template file; Supports HTTP(S) URLs or file paths.")
 	cmd.MarkFlagFilename("file", "yaml", "yml", "json", "jsonnet")
-	cmd.Flags().BoolVarP(&b.recurse, "recurse", "R", false, "Process the directory used in -f, --file recursively. Useful when you want to manage related manifests organized within the same directory.")
+	cmd.Flags().BoolVarP(&b.recurse, "recurse", "R", false, "Process the directory used in -f, --file recursively. Useful when you want to manage related templates organized within the same directory.")
 
-	cmd.Flags().StringSliceVarP(&b.urls, "url", "u", nil, "URL to a package file")
+	cmd.Flags().StringSliceVarP(&b.urls, "template-url", "u", nil, "URL to template file")
+	cmd.Flags().MarkHidden("template-url")
 
 	cmd.Flags().StringVarP(&b.encoding, "encoding", "e", "", "Encoding for the input stream. If a file is provided will gather encoding type from file extension. If extension provided will override.")
 	cmd.MarkFlagFilename("encoding", "yaml", "yml", "json", "jsonnet")
 }
 
-func (b *cmdPkgBuilder) writePkg(w io.Writer, pkgSVC pkger.SVC, outPath string, opts ...pkger.CreatePkgSetFn) error {
+func (b *cmdPkgBuilder) exportPkg(w io.Writer, pkgSVC pkger.SVC, outPath string, opts ...pkger.CreatePkgSetFn) error {
 	pkg, err := pkgSVC.CreatePkg(context.Background(), opts...)
 	if err != nil {
 		return err
 	}
 
+	return b.writePkg(w, outPath, pkg)
+}
+
+func (b *cmdPkgBuilder) writePkg(w io.Writer, outPath string, pkg *pkger.Pkg) error {
 	buf, err := createPkgBuf(pkg, outPath)
 	if err != nil {
 		return err
@@ -670,12 +986,25 @@ func (b *cmdPkgBuilder) readRawPkgsFromURLs(urls []string) ([]*pkger.Pkg, error)
 }
 
 func (b *cmdPkgBuilder) readPkg() (*pkger.Pkg, bool, error) {
-	pkgs, err := b.readRawPkgsFromFiles(b.files, b.recurse)
+	var remotes, files []string
+	for _, rawURL := range append(b.files, b.urls...) {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return nil, false, ierror.Wrap(err, fmt.Sprintf("failed to parse url[%s]", rawURL))
+		}
+		if strings.HasPrefix(u.Scheme, "http") {
+			remotes = append(remotes, u.String())
+		} else {
+			files = append(files, u.String())
+		}
+	}
+
+	pkgs, err := b.readRawPkgsFromFiles(files, b.recurse)
 	if err != nil {
 		return nil, false, err
 	}
 
-	urlPkgs, err := b.readRawPkgsFromURLs(b.urls)
+	urlPkgs, err := b.readRawPkgsFromURLs(remotes)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1164,13 +1493,19 @@ func (b *cmdPkgBuilder) printPkgDiff(diff pkger.Diff) error {
 	return nil
 }
 
-func (b *cmdPkgBuilder) printPkgSummary(sum pkger.Summary) error {
+func (b *cmdPkgBuilder) printPkgSummary(stackID influxdb.ID, sum pkger.Summary) error {
 	if b.quiet {
 		return nil
 	}
 
 	if b.json {
-		return b.writeJSON(sum)
+		return b.writeJSON(struct {
+			StackID string `json:"stackID"`
+			Summary pkger.Summary
+		}{
+			StackID: stackID.String(),
+			Summary: sum,
+		})
 	}
 
 	commonHeaders := []string{"Package Name", "ID", "Resource Name"}
@@ -1323,6 +1658,10 @@ func (b *cmdPkgBuilder) printPkgSummary(sum pkger.Summary) error {
 		tablePrintFn("MISSING SECRETS", headers, len(secrets), func(i int) []string {
 			return []string{secrets[i]}
 		})
+	}
+
+	if stackID != 0 {
+		fmt.Fprintln(b.w, "Stack ID: "+stackID.String())
 	}
 
 	return nil

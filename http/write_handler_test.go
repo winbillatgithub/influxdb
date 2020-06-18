@@ -16,6 +16,7 @@ import (
 	httpmock "github.com/influxdata/influxdb/v2/http/mock"
 	kithttp "github.com/influxdata/influxdb/v2/kit/transport/http"
 	"github.com/influxdata/influxdb/v2/mock"
+	"github.com/influxdata/influxdb/v2/models"
 	influxtesting "github.com/influxdata/influxdb/v2/testing"
 	"go.uber.org/zap/zaptest"
 )
@@ -175,6 +176,23 @@ func TestWriteHandler_handleWrite(t *testing.T) {
 			},
 		},
 		{
+			name: "missing bucket returns 404",
+			request: request{
+				org:    "043e0780ee2b1000",
+				bucket: "",
+				body:   "m1,t1=v1 f1=1",
+				auth:   bucketWritePermission("043e0780ee2b1000", "04504b356e23b000"),
+			},
+			state: state{
+				org:    testOrg("043e0780ee2b1000"),
+				bucket: testBucket("043e0780ee2b1000", "04504b356e23b000"),
+			},
+			wants: wants{
+				code: 404,
+				body: `{"code":"not found","message":"bucket not found"}`,
+			},
+		},
+		{
 			name: "bucket error returns 404 error",
 			request: request{
 				org:    "043e0780ee2b1000",
@@ -286,7 +304,7 @@ func TestWriteHandler_handleWrite(t *testing.T) {
 			state: state{
 				org:    testOrg("043e0780ee2b1000"),
 				bucket: testBucket("043e0780ee2b1000", "04504b356e23b000"),
-				opts:   []WriteHandlerOption{WithParserMaxBytes(5)},
+				opts:   []WriteHandlerOption{WithParserOptions(models.WithParserMaxBytes(5))},
 			},
 			wants: wants{
 				code: 413,
@@ -304,7 +322,7 @@ func TestWriteHandler_handleWrite(t *testing.T) {
 			state: state{
 				org:    testOrg("043e0780ee2b1000"),
 				bucket: testBucket("043e0780ee2b1000", "04504b356e23b000"),
-				opts:   []WriteHandlerOption{WithParserMaxLines(2)},
+				opts:   []WriteHandlerOption{WithParserOptions(models.WithParserMaxLines(2))},
 			},
 			wants: wants{
 				code: 413,
@@ -322,7 +340,7 @@ func TestWriteHandler_handleWrite(t *testing.T) {
 			state: state{
 				org:    testOrg("043e0780ee2b1000"),
 				bucket: testBucket("043e0780ee2b1000", "04504b356e23b000"),
-				opts:   []WriteHandlerOption{WithParserMaxValues(4)},
+				opts:   []WriteHandlerOption{WithParserOptions(models.WithParserMaxValues(4))},
 			},
 			wants: wants{
 				code: 413,

@@ -22,19 +22,27 @@ func MWTracing() SVCMiddleware {
 var _ SVC = (*traceMW)(nil)
 
 func (s *traceMW) InitStack(ctx context.Context, userID influxdb.ID, newStack Stack) (Stack, error) {
-	span, ctx := tracing.StartSpanFromContextWithOperationName(ctx, "InitStack")
+	span, ctx := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 	return s.next.InitStack(ctx, userID, newStack)
 }
 
 func (s *traceMW) DeleteStack(ctx context.Context, identifiers struct{ OrgID, UserID, StackID influxdb.ID }) error {
-	span, ctx := tracing.StartSpanFromContextWithOperationName(ctx, "DeleteStack")
+	span, ctx := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 	return s.next.DeleteStack(ctx, identifiers)
 }
 
+func (s *traceMW) ExportStack(ctx context.Context, orgID, stackID influxdb.ID) (*Pkg, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	span.LogFields(log.String("org_id", orgID.String()))
+	span.LogFields(log.String("stack_id", stackID.String()))
+	defer span.Finish()
+	return s.next.ExportStack(ctx, orgID, stackID)
+}
+
 func (s *traceMW) ListStacks(ctx context.Context, orgID influxdb.ID, f ListFilter) ([]Stack, error) {
-	span, ctx := tracing.StartSpanFromContextWithOperationName(ctx, "ListStacks")
+	span, ctx := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
 	stacks, err := s.next.ListStacks(ctx, orgID, f)
@@ -45,22 +53,34 @@ func (s *traceMW) ListStacks(ctx context.Context, orgID influxdb.ID, f ListFilte
 	return stacks, err
 }
 
+func (s *traceMW) ReadStack(ctx context.Context, id influxdb.ID) (Stack, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+	return s.next.ReadStack(ctx, id)
+}
+
+func (s *traceMW) UpdateStack(ctx context.Context, upd StackUpdate) (Stack, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+	return s.next.UpdateStack(ctx, upd)
+}
+
 func (s *traceMW) CreatePkg(ctx context.Context, setters ...CreatePkgSetFn) (pkg *Pkg, err error) {
-	span, ctx := tracing.StartSpanFromContextWithOperationName(ctx, "CreatePkg")
+	span, ctx := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 	return s.next.CreatePkg(ctx, setters...)
 }
 
-func (s *traceMW) DryRun(ctx context.Context, orgID, userID influxdb.ID, pkg *Pkg, opts ...ApplyOptFn) (sum Summary, diff Diff, err error) {
-	span, ctx := tracing.StartSpanFromContextWithOperationName(ctx, "DryRun")
+func (s *traceMW) DryRun(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (PkgImpactSummary, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
 	span.LogKV("orgID", orgID.String(), "userID", userID.String())
 	defer span.Finish()
-	return s.next.DryRun(ctx, orgID, userID, pkg, opts...)
+	return s.next.DryRun(ctx, orgID, userID, opts...)
 }
 
-func (s *traceMW) Apply(ctx context.Context, orgID, userID influxdb.ID, pkg *Pkg, opts ...ApplyOptFn) (sum Summary, diff Diff, err error) {
-	span, ctx := tracing.StartSpanFromContextWithOperationName(ctx, "Apply")
+func (s *traceMW) Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (PkgImpactSummary, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
 	span.LogKV("orgID", orgID.String(), "userID", userID.String())
 	defer span.Finish()
-	return s.next.Apply(ctx, orgID, userID, pkg, opts...)
+	return s.next.Apply(ctx, orgID, userID, opts...)
 }

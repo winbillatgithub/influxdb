@@ -30,6 +30,7 @@ import {Auth0Connection, FormFieldValidation} from 'src/types'
 import {notify} from 'src/shared/actions/notifications'
 import {passwordResetSuccessfully} from 'src/shared/copy/notifications'
 import {getAuth0Config} from 'src/authorizations/apis'
+import {getFromLocalStorage} from 'src/localStorage'
 
 interface ErrorObject {
   emailError?: string
@@ -61,7 +62,8 @@ class LoginPageContents extends PureComponent<DispatchProps> {
 
   public async componentDidMount() {
     try {
-      const config = await getAuth0Config()
+      const redirectTo = getFromLocalStorage('redirectTo') || '/'
+      const config = await getAuth0Config(redirectTo)
       this.auth0 = new auth0js.WebAuth({
         domain: config.domain,
         clientID: config.clientID,
@@ -71,10 +73,6 @@ class LoginPageContents extends PureComponent<DispatchProps> {
       })
     } catch (error) {
       console.error(error)
-      // TODO: uncomment after demo day
-      // redirect to universal login page if there's an error
-      // window.location.href =
-      // 'https://auth.a.influxcloud.net/'
       throw error
     }
   }

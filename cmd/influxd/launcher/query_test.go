@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	nethttp "net/http"
 	"strings"
@@ -15,9 +16,11 @@ import (
 	"time"
 
 	"github.com/influxdata/flux"
+	"github.com/influxdata/flux/csv"
 	"github.com/influxdata/flux/execute"
 	"github.com/influxdata/flux/execute/executetest"
 	"github.com/influxdata/flux/lang"
+	"github.com/influxdata/flux/runtime"
 	"github.com/influxdata/flux/values"
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/cmd/influxd/launcher"
@@ -27,7 +30,7 @@ import (
 )
 
 func TestLauncher_Write_Query_FieldKey(t *testing.T) {
-	be := launcher.RunTestLauncherOrFail(t, ctx)
+	be := launcher.RunTestLauncherOrFail(t, ctx, nil)
 	be.SetupOrFail(t)
 	defer be.ShutdownOrFail(t, ctx)
 
@@ -73,7 +76,7 @@ mem,server=b value=45.2`))
 // and checks that the queried results contain the expected number of tables
 // and expected number of columns.
 func TestLauncher_WriteV2_Query(t *testing.T) {
-	be := launcher.RunTestLauncherOrFail(t, ctx)
+	be := launcher.RunTestLauncherOrFail(t, ctx, nil)
 	be.SetupOrFail(t)
 	defer be.ShutdownOrFail(t, ctx)
 
@@ -215,7 +218,7 @@ func queryPoints(ctx context.Context, t *testing.T, l *launcher.TestLauncher, op
 	if d.verbose {
 		t.Logf("query:\n%s", qs)
 	}
-	pkg, err := flux.Parse(qs)
+	pkg, err := runtime.ParseToJSON(qs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +295,7 @@ func TestLauncher_QueryMemoryLimits(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			l := launcher.RunTestLauncherOrFail(t, ctx, tc.args...)
+			l := launcher.RunTestLauncherOrFail(t, ctx, nil, tc.args...)
 			l.SetupOrFail(t)
 			defer l.ShutdownOrFail(t, ctx)
 
@@ -330,7 +333,7 @@ func TestLauncher_QueryMemoryLimits(t *testing.T) {
 func TestLauncher_QueryMemoryManager_ExceedMemory(t *testing.T) {
 	t.Skip("this test is flaky, occasionally get error: \"memory allocation limit reached\" on OK query")
 
-	l := launcher.RunTestLauncherOrFail(t, ctx,
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil,
 		"--log-level", "error",
 		"--query-concurrency", "1",
 		"--query-initial-memory-bytes", "100",
@@ -375,7 +378,7 @@ func TestLauncher_QueryMemoryManager_ExceedMemory(t *testing.T) {
 func TestLauncher_QueryMemoryManager_ContextCanceled(t *testing.T) {
 	t.Skip("this test is flaky, occasionally get error: \"memory allocation limit reached\"")
 
-	l := launcher.RunTestLauncherOrFail(t, ctx,
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil,
 		"--log-level", "error",
 		"--query-concurrency", "1",
 		"--query-initial-memory-bytes", "100",
@@ -419,7 +422,7 @@ func TestLauncher_QueryMemoryManager_ContextCanceled(t *testing.T) {
 func TestLauncher_QueryMemoryManager_ConcurrentQueries(t *testing.T) {
 	t.Skip("this test is flaky, occasionally get error: \"dial tcp 127.0.0.1:59654: connect: connection reset by peer\"")
 
-	l := launcher.RunTestLauncherOrFail(t, ctx,
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil,
 		"--log-level", "error",
 		"--query-queue-size", "1024",
 		"--query-concurrency", "1",
@@ -493,7 +496,7 @@ func TestLauncher_QueryMemoryManager_ConcurrentQueries(t *testing.T) {
 }
 
 func TestLauncher_Query_LoadSecret_Success(t *testing.T) {
-	l := launcher.RunTestLauncherOrFail(t, ctx)
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil)
 	l.SetupOrFail(t)
 	defer l.ShutdownOrFail(t, ctx)
 
@@ -543,7 +546,7 @@ from(bucket: "%s")
 }
 
 func TestLauncher_Query_LoadSecret_Forbidden(t *testing.T) {
-	l := launcher.RunTestLauncherOrFail(t, ctx)
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil)
 	l.SetupOrFail(t)
 	defer l.ShutdownOrFail(t, ctx)
 
@@ -602,7 +605,7 @@ from(bucket: "%s")
 // This will change once we make side effects drive execution and remove from/to concurrency in our e2e tests.
 // See https://github.com/influxdata/flux/issues/1799.
 func TestLauncher_DynamicQuery(t *testing.T) {
-	l := launcher.RunTestLauncherOrFail(t, ctx)
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil)
 	l.SetupOrFail(t)
 	defer l.ShutdownOrFail(t, ctx)
 
@@ -677,7 +680,7 @@ stream2 |> filter(fn: (r) => contains(value: r._value, set: col)) |> group() |> 
 }
 
 func TestLauncher_Query_ExperimentalTo(t *testing.T) {
-	l := launcher.RunTestLauncherOrFail(t, ctx)
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil)
 	l.SetupOrFail(t)
 	defer l.ShutdownOrFail(t, ctx)
 
@@ -742,5 +745,383 @@ from(bucket: "%s")
 	// Make sure that the data we stored matches the CSV
 	if err := executetest.EqualResultIterators(csvResultIterator, fromResultIterator); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLauncher_Query_PushDownWindowAggregateAndBareAggregate(t *testing.T) {
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil,
+		"--feature-flags", "pushDownWindowAggregateCount=true,pushDownWindowAggregateSum=true")
+	l.SetupOrFail(t)
+	defer l.ShutdownOrFail(t, ctx)
+
+	l.WritePointsOrFail(t, `
+m0,k=k0 f=0i 0
+m0,k=k0 f=1i 1000000000
+m0,k=k0 f=2i 2000000000
+m0,k=k0 f=3i 3000000000
+m0,k=k0 f=4i 4000000000
+m0,k=k0 f=5i 5000000000
+m0,k=k0 f=6i 6000000000
+m0,k=k0 f=5i 7000000000
+m0,k=k0 f=0i 8000000000
+m0,k=k0 f=6i 9000000000
+m0,k=k0 f=6i 10000000000
+m0,k=k0 f=7i 11000000000
+m0,k=k0 f=5i 12000000000
+m0,k=k0 f=8i 13000000000
+m0,k=k0 f=9i 14000000000
+m0,k=k0 f=5i 15000000000
+`)
+
+	getReadRequestCount := func(op string) uint64 {
+		const metricName = "query_influxdb_source_read_request_duration_seconds"
+		mf := l.Metrics(t)[metricName]
+		if mf != nil {
+			fmt.Printf("%v\n", mf)
+			for _, m := range mf.Metric {
+				for _, label := range m.Label {
+					if label.GetName() == "op" && label.GetValue() == op {
+						return m.Histogram.GetSampleCount()
+					}
+				}
+			}
+		}
+		return 0
+	}
+
+	for _, tt := range []struct {
+		name string
+		q    string
+		op   string
+		res  string
+	}{
+		{
+			name: "count",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> aggregateWindow(every: 5s, fn: count)
+	|> drop(columns: ["_start", "_stop"])
+`,
+			op: "readWindow(count)",
+			res: `
+#datatype,string,long,dateTime:RFC3339,long,string,string,string
+#group,false,false,false,false,true,true,true
+#default,_result,,,,,,
+,result,table,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,5,f,m0,k0
+,,0,1970-01-01T00:00:10Z,5,f,m0,k0
+,,0,1970-01-01T00:00:15Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "bare count",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> count()
+	|> drop(columns: ["_start", "_stop"])
+`,
+			op: "readWindow(count)",
+			res: `
+#group,false,false,false,true,true,true
+#datatype,string,long,long,string,string,string
+#default,_result,,,,,
+,result,table,_value,_field,_measurement,k
+,,0,15,f,m0,k0
+`,
+		},
+		{
+			name: "sum",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> aggregateWindow(every: 5s, fn: sum)
+	|> drop(columns: ["_start", "_stop"])
+`,
+			op: "readWindow(sum)",
+			res: `
+#datatype,string,long,dateTime:RFC3339,long,string,string,string
+#group,false,false,false,false,true,true,true
+#default,_result,,,,,,
+,result,table,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,10,f,m0,k0
+,,0,1970-01-01T00:00:10Z,22,f,m0,k0
+,,0,1970-01-01T00:00:15Z,35,f,m0,k0
+`,
+		},
+		{
+			name: "bare sum",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> sum()
+	|> drop(columns: ["_start", "_stop"])
+`,
+			op: "readWindow(sum)",
+			res: `
+#group,false,false,false,true,true,true
+#datatype,string,long,long,string,string,string
+#default,_result,,,,,
+,result,table,_value,_field,_measurement,k
+,,0,67,f,m0,k0
+`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			wantCount := getReadRequestCount(tt.op) + 1
+
+			prelude := fmt.Sprintf("v = {bucket: \"%s\", timeRangeStart: 1970-01-01T00:00:00Z, timeRangeStop: 1970-01-01T00:00:15Z}", l.Bucket.Name)
+			queryStr := prelude + "\n" + tt.q
+			res := l.MustExecuteQuery(queryStr)
+			defer res.Done()
+			got := flux.NewSliceResultIterator(res.Results)
+			defer got.Release()
+
+			dec := csv.NewMultiResultDecoder(csv.ResultDecoderConfig{})
+			want, err := dec.Decode(ioutil.NopCloser(strings.NewReader(tt.res)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer want.Release()
+
+			if err := executetest.EqualResultIterators(want, got); err != nil {
+				t.Fatal(err)
+			}
+
+			if want, got := wantCount, getReadRequestCount(tt.op); want != got {
+				t.Fatalf("unexpected sample count -want/+got:\n\t- %d\n\t+ %d", want, got)
+			}
+		})
+	}
+}
+
+func TestLauncher_Query_PushDownGroupAggregate(t *testing.T) {
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil,
+		"--feature-flags",
+		"pushDownGroupAggregateCount=true",
+		"--feature-flags",
+		"pushDownGroupAggregateSum=true",
+		"--feature-flags",
+		"pushDownGroupAggregateFirst=true",
+		"--feature-flags",
+		"pushDownGroupAggregateLast=true",
+	)
+	l.SetupOrFail(t)
+	defer l.ShutdownOrFail(t, ctx)
+
+	l.WritePointsOrFail(t, `
+m0,k=k0,kk=kk0 f=0i 0
+m0,k=k0,kk=kk1 f=1i 1000000000
+m0,k=k0,kk=kk0 f=2i 2000000000
+m0,k=k0,kk=kk1 f=3i 3000000000
+m0,k=k0,kk=kk0 f=4i 4000000000
+m0,k=k0,kk=kk1 f=5i 5000000000
+m0,k=k0,kk=kk0 f=6i 6000000000
+m0,k=k0,kk=kk1 f=5i 7000000000
+m0,k=k0,kk=kk0 f=0i 8000000000
+m0,k=k0,kk=kk1 f=6i 9000000000
+m0,k=k0,kk=kk0 f=6i 10000000000
+m0,k=k0,kk=kk1 f=7i 11000000000
+m0,k=k0,kk=kk0 f=5i 12000000000
+m0,k=k0,kk=kk1 f=8i 13000000000
+m0,k=k0,kk=kk0 f=9i 14000000000
+m0,k=k0,kk=kk1 f=5i 15000000000
+`)
+
+	getReadRequestCount := func(op string) uint64 {
+		const metricName = "query_influxdb_source_read_request_duration_seconds"
+		mf := l.Metrics(t)[metricName]
+		if mf != nil {
+			fmt.Printf("%v\n", mf)
+			for _, m := range mf.Metric {
+				for _, label := range m.Label {
+					if label.GetName() == "op" && label.GetValue() == op {
+						return m.Histogram.GetSampleCount()
+					}
+				}
+			}
+		}
+		return 0
+	}
+
+	for _, tt := range []struct {
+		name string
+		q    string
+		op   string
+		res  string
+	}{
+		{
+			name: "group first",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 0)
+	|> group(columns: ["k"])
+	|> first()
+	|> keep(columns: ["_time", "_value"])
+`,
+			op: "readGroup(first)",
+			res: `
+#datatype,string,long,dateTime:RFC3339,long
+#group,false,false,false,false
+#default,_result,,,
+,result,table,_time,_value
+,,0,1970-01-01T00:00:00.00Z,0
+`,
+		},
+		{
+			name: "group none first",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 0)
+	|> group()
+	|> first()
+	|> keep(columns: ["_time", "_value"])
+`,
+			op: "readGroup(first)",
+			res: `
+#datatype,string,long,dateTime:RFC3339,long
+#group,false,false,false,false
+#default,_result,,,
+,result,table,_time,_value
+,,0,1970-01-01T00:00:00.00Z,0
+`,
+		},
+		{
+			name: "group last",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 0)
+	|> group(columns: ["k"])
+	|> last()
+	|> keep(columns: ["_time", "_value"])
+`,
+			op: "readGroup(last)",
+			res: `
+#datatype,string,long,dateTime:RFC3339,long
+#group,false,false,false,false
+#default,_result,,,
+,result,table,_time,_value
+,,0,1970-01-01T00:00:15.00Z,5
+`,
+		},
+		{
+			name: "group none last",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 0)
+	|> group()
+	|> last()
+	|> keep(columns: ["_time", "_value"])
+`,
+			op: "readGroup(last)",
+			res: `
+#datatype,string,long,dateTime:RFC3339,long
+#group,false,false,false,false
+#default,_result,,,
+,result,table,_time,_value
+,,0,1970-01-01T00:00:15.00Z,5
+`,
+		},
+		{
+			name: "count group none",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> group()
+	|> count()
+	|> drop(columns: ["_start", "_stop"])
+`,
+			op: "readGroup(count)",
+			res: `
+#datatype,string,long,long
+#group,false,false,false
+#default,_result,,
+,result,table,_value
+,,0,15
+`,
+		},
+		{
+			name: "count group",
+			op:   "readGroup(count)",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> group(columns: ["kk"])
+	|> count()
+	|> drop(columns: ["_start", "_stop"])
+`,
+			res: `
+#datatype,string,long,string,long
+#group,false,false,true,false
+#default,_result,,,
+,result,table,kk,_value
+,,0,kk0,8
+,,1,kk1,7
+`,
+		},
+		{
+			name: "sum group none",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> group()
+	|> sum()
+	|> drop(columns: ["_start", "_stop"])
+`,
+			op: "readGroup(sum)",
+			res: `
+#datatype,string,long,long
+#group,false,false,false
+#default,_result,,
+,result,table,_value
+,,0,67
+`,
+		},
+		{
+			name: "sum group",
+			op:   "readGroup(sum)",
+			q: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> group(columns: ["kk"])
+	|> sum()
+	|> drop(columns: ["_start", "_stop"])
+`,
+			res: `
+#datatype,string,long,string,long
+#group,false,false,true,false
+#default,_result,,,
+,result,table,kk,_value
+,,0,kk0,32
+,,1,kk1,35
+`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			wantCount := getReadRequestCount(tt.op) + 1
+
+			prelude := fmt.Sprintf("v = {bucket: \"%s\", timeRangeStart: 1970-01-01T00:00:00Z, timeRangeStop: 1970-01-01T00:00:15Z}", l.Bucket.Name)
+			queryStr := prelude + "\n" + tt.q
+			res := l.MustExecuteQuery(queryStr)
+			defer res.Done()
+			got := flux.NewSliceResultIterator(res.Results)
+			defer got.Release()
+
+			dec := csv.NewMultiResultDecoder(csv.ResultDecoderConfig{})
+			want, err := dec.Decode(ioutil.NopCloser(strings.NewReader(tt.res)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer want.Release()
+
+			if err := executetest.EqualResultIterators(want, got); err != nil {
+				t.Error(err)
+			}
+
+			if want, got := wantCount, getReadRequestCount(tt.op); want != got {
+				t.Fatalf("unexpected sample count -want/+got:\n\t- %d\n\t+ %d", want, got)
+			}
+		})
 	}
 }

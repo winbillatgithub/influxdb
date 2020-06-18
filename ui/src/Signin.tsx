@@ -9,6 +9,13 @@ import {client} from 'src/utils/api'
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
 
+// Utils
+import {
+  getFromLocalStorage,
+  removeFromLocalStorage,
+  setToLocalStorage,
+} from 'src/localStorage'
+
 // Actions
 import {notify as notifyAction} from 'src/shared/actions/notifications'
 
@@ -74,6 +81,10 @@ export class Signin extends PureComponent<Props, State> {
   private checkForLogin = async () => {
     try {
       await client.users.me()
+      const redirectIsSet = !!getFromLocalStorage('redirectTo')
+      if (redirectIsSet) {
+        removeFromLocalStorage('redirectTo')
+      }
     } catch (error) {
       const {
         location: {pathname},
@@ -82,8 +93,13 @@ export class Signin extends PureComponent<Props, State> {
       clearInterval(this.intervalID)
 
       if (CLOUD) {
-        // TODO: add returnTo to CLOUD signin
-        window.location.pathname = CLOUD_SIGNIN_PATHNAME
+        const url = new URL(
+          `${window.location.origin}${CLOUD_SIGNIN_PATHNAME}?redirectTo=${
+            window.location.href
+          }`
+        )
+        setToLocalStorage('redirectTo', window.location.href)
+        window.location.href = url.href
         throw error
       }
 

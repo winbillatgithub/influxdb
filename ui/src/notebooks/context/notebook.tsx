@@ -1,18 +1,26 @@
-import React, {FC, useState, useCallback} from 'react'
+import React, {FC, useState, useCallback, RefObject} from 'react'
+import {RemoteDataState} from 'src/types'
 import {PipeData} from 'src/notebooks'
+import {BothResults} from 'src/notebooks'
 
 export interface PipeMeta {
   title: string
   visible: boolean
+  loading: RemoteDataState
+  focus: boolean
+  panelRef: RefObject<HTMLDivElement>
 }
 
+// TODO: this is screaming for normalization. figure out frontend uuids for cells
 export interface NotebookContextType {
   id: string
   pipes: PipeData[]
   meta: PipeMeta[] // data only used for the view layer for Notebooks
+  results: BothResults[]
   addPipe: (pipe: PipeData) => void
   updatePipe: (idx: number, pipe: PipeData) => void
   updateMeta: (idx: number, pipe: PipeMeta) => void
+  updateResult: (idx: number, result: BothResults) => void
   movePipe: (currentIdx: number, newIdx: number) => void
   removePipe: (idx: number) => void
 }
@@ -21,9 +29,11 @@ export const DEFAULT_CONTEXT: NotebookContextType = {
   id: 'new',
   pipes: [],
   meta: [],
+  results: [],
   addPipe: () => {},
   updatePipe: () => {},
   updateMeta: () => {},
+  updateResult: () => {},
   movePipe: () => {},
   removePipe: () => {},
 }
@@ -36,6 +46,8 @@ if (TEST_MODE) {
   const TEST_NOTEBOOK = require('src/notebooks/context/notebook.mock.json')
   DEFAULT_CONTEXT.id = TEST_NOTEBOOK.id
   DEFAULT_CONTEXT.pipes = TEST_NOTEBOOK.pipes
+  DEFAULT_CONTEXT.meta = TEST_NOTEBOOK.meta
+  DEFAULT_CONTEXT.results = new Array(TEST_NOTEBOOK.pipes.length)
 }
 
 export const NotebookContext = React.createContext<NotebookContextType>(
@@ -48,9 +60,11 @@ export const NotebookProvider: FC = ({children}) => {
   const [id] = useState(DEFAULT_CONTEXT.id)
   const [pipes, setPipes] = useState(DEFAULT_CONTEXT.pipes)
   const [meta, setMeta] = useState(DEFAULT_CONTEXT.meta)
+  const [results, setResults] = useState(DEFAULT_CONTEXT.results)
 
   const _setPipes = useCallback(setPipes, [id])
   const _setMeta = useCallback(setMeta, [id])
+  const _setResults = useCallback(setResults, [id])
 
   const addPipe = useCallback(
     (pipe: PipeData) => {
@@ -60,15 +74,51 @@ export const NotebookProvider: FC = ({children}) => {
           return pipes.slice()
         }
       }
-      _setPipes(add(pipe))
-      _setMeta(
-        add({
-          title: `Notebook_${++GENERATOR_INDEX}`,
-          visible: true,
-        })
-      )
+
+      if (pipes.length && pipe.type !== 'query') {
+        _setResults(add({...results[results.length - 1]}))
+        _setMeta(
+          add({
+            title: `Cell_${++GENERATOR_INDEX}`,
+            visible: true,
+            loading: meta[meta.length - 1].loading,
+            focus: false,
+          })
+        )
+      } else {
+        _setResults(add({}))
+        _setMeta(
+          add({
+            title: `Cell_${++GENERATOR_INDEX}`,
+            visible: true,
+            loading: RemoteDataState.NotStarted,
+            focus: false,
+          })
+        )
+      }
+
+      if (pipe.type === 'query') {
+        if (!pipes.filter(p => p.type === 'query').length) {
+          _setPipes(add(pipe))
+        } else {
+          const _pipe = {
+            ...pipe,
+            queries: [
+              {
+                ...pipe.queries[0],
+                text:
+                  pipe.queries[0].text +
+                  '\n\n// tip: use the __PREVIOUS_RESULT__ variable to use results from the previous cell',
+              },
+            ],
+          }
+          _setPipes(add(_pipe))
+        }
+      } else {
+        _setPipes(add(pipe))
+      }
     },
-    [id]
+    [id, pipes, meta, results]
   )
 
   const updatePipe = useCallback(
@@ -81,7 +131,7 @@ export const NotebookProvider: FC = ({children}) => {
         return pipes.slice()
       })
     },
-    [id]
+    [id, pipes]
   )
 
   const updateMeta = useCallback(
@@ -94,7 +144,19 @@ export const NotebookProvider: FC = ({children}) => {
         return pipes.slice()
       })
     },
-    [id]
+    [id, meta]
+  )
+
+  const updateResult = useCallback(
+    (idx: number, results: BothResults) => {
+      _setResults(pipes => {
+        pipes[idx] = {
+          ...results,
+        } as BothResults
+        return pipes.slice()
+      })
+    },
+    [id, results]
   )
 
   const movePipe = useCallback(
@@ -114,6 +176,7 @@ export const NotebookProvider: FC = ({children}) => {
       }
       _setPipes(move)
       _setMeta(move)
+      _setResults(move)
     },
     [id]
   )
@@ -126,6 +189,7 @@ export const NotebookProvider: FC = ({children}) => {
       }
       _setPipes(remove)
       _setMeta(remove)
+      _setResults(remove)
     },
     [id]
   )
@@ -136,8 +200,10 @@ export const NotebookProvider: FC = ({children}) => {
         id,
         pipes,
         meta,
+        results,
         updatePipe,
         updateMeta,
+        updateResult,
         movePipe,
         addPipe,
         removePipe,

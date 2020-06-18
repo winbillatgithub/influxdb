@@ -37,13 +37,16 @@ import (
 	"github.com/influxdata/influxdb/v2/kit/tracing"
 	kithttp "github.com/influxdata/influxdb/v2/kit/transport/http"
 	"github.com/influxdata/influxdb/v2/kv"
+	"github.com/influxdata/influxdb/v2/label"
 	influxlogger "github.com/influxdata/influxdb/v2/logger"
 	"github.com/influxdata/influxdb/v2/nats"
 	"github.com/influxdata/influxdb/v2/pkger"
 	infprom "github.com/influxdata/influxdb/v2/prometheus"
 	"github.com/influxdata/influxdb/v2/query"
 	"github.com/influxdata/influxdb/v2/query/control"
+	"github.com/influxdata/influxdb/v2/query/fluxlang"
 	"github.com/influxdata/influxdb/v2/query/stdlib/influxdata/influxdb"
+	"github.com/influxdata/influxdb/v2/secret"
 	"github.com/influxdata/influxdb/v2/session"
 	"github.com/influxdata/influxdb/v2/snowflake"
 	"github.com/influxdata/influxdb/v2/source"
@@ -268,12 +271,6 @@ func buildLauncherCommand(l *Launcher, cmd *cobra.Command) {
 			Desc:    "TLS key for HTTPs",
 		},
 		{
-			DestP:   &l.enableNewMetaStore,
-			Flag:    "new-meta-store",
-			Default: true,
-			Desc:    "enables the new meta store",
-		},
-		{
 			DestP:   &l.noTasks,
 			Flag:    "no-tasks",
 			Default: false,
@@ -340,9 +337,8 @@ type Launcher struct {
 	enginePath      string
 	secretStore     string
 
-	enableNewMetaStore bool
-
 	featureFlags map[string]string
+	flagger      feature.Flagger
 
 	// Query options.
 	concurrencyQuota                int
@@ -549,7 +545,8 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 	}
 
 	serviceConfig := kv.ServiceConfig{
-		SessionLength: time.Duration(m.sessionLength) * time.Minute,
+		SessionLength:       time.Duration(m.sessionLength) * time.Minute,
+		FluxLanguageService: fluxlang.DefaultService,
 	}
 
 	flushers := flushers{}
@@ -588,12 +585,6 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 	m.reg.MustRegister(m.boltClient)
 
 	var (
-		userSvc         platform.UserService                = m.kvService
-		orgSvc          platform.OrganizationService        = m.kvService
-		userResourceSvc platform.UserResourceMappingService = m.kvService
-		bucketSvc       platform.BucketService              = m.kvService
-		passwdsSvc      platform.PasswordsService           = m.kvService
-
 		authSvc                   platform.AuthorizationService            = m.kvService
 		variableSvc               platform.VariableService                 = m.kvService
 		sourceSvc                 platform.SourceService                   = m.kvService
@@ -604,8 +595,6 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		orgLogSvc                 platform.OrganizationOperationLogService = m.kvService
 		scraperTargetSvc          platform.ScraperTargetStoreService       = m.kvService
 		telegrafSvc               platform.TelegrafConfigStore             = m.kvService
-		labelSvc                  platform.LabelService                    = m.kvService
-		secretSvc                 platform.SecretService                   = m.kvService
 		lookupSvc                 platform.LookupService                   = m.kvService
 		notificationEndpointStore platform.NotificationEndpointService     = m.kvService
 	)
@@ -615,15 +604,23 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		m.log.Error("Failed creating new meta store", zap.Error(err))
 		return err
 	}
+	ts := tenant.NewService(store)
 
-	if m.enableNewMetaStore {
-		ts := tenant.NewService(store)
-		userSvc = tenant.NewUserLogger(m.log.With(zap.String("store", "new")), tenant.NewUserMetrics(m.reg, ts, metric.WithSuffix("new")))
-		orgSvc = tenant.NewOrgLogger(m.log.With(zap.String("store", "new")), tenant.NewOrgMetrics(m.reg, ts, metric.WithSuffix("new")))
-		userResourceSvc = tenant.NewURMLogger(m.log.With(zap.String("store", "new")), tenant.NewUrmMetrics(m.reg, ts, metric.WithSuffix("new")))
-		bucketSvc = tenant.NewBucketLogger(m.log.With(zap.String("store", "new")), tenant.NewBucketMetrics(m.reg, ts, metric.WithSuffix("new")))
-		passwdsSvc = tenant.NewPasswordLogger(m.log.With(zap.String("store", "new")), tenant.NewPasswordMetrics(m.reg, ts, metric.WithSuffix("new")))
+	var (
+		userSvc         platform.UserService                = tenant.NewUserLogger(m.log.With(zap.String("store", "new")), tenant.NewUserMetrics(m.reg, ts, metric.WithSuffix("new")))
+		orgSvc          platform.OrganizationService        = tenant.NewOrgLogger(m.log.With(zap.String("store", "new")), tenant.NewOrgMetrics(m.reg, ts, metric.WithSuffix("new")))
+		userResourceSvc platform.UserResourceMappingService = tenant.NewURMLogger(m.log.With(zap.String("store", "new")), tenant.NewUrmMetrics(m.reg, ts, metric.WithSuffix("new")))
+		bucketSvc       platform.BucketService              = tenant.NewBucketLogger(m.log.With(zap.String("store", "new")), tenant.NewBucketMetrics(m.reg, ts, metric.WithSuffix("new")))
+		passwdsSvc      platform.PasswordsService           = tenant.NewPasswordLogger(m.log.With(zap.String("store", "new")), tenant.NewPasswordMetrics(m.reg, ts, metric.WithSuffix("new")))
+	)
+
+	secretStore, err := secret.NewStore(m.kvStore)
+	if err != nil {
+		m.log.Error("Failed creating new meta store", zap.Error(err))
+		return err
 	}
+
+	var secretSvc platform.SecretService = secret.NewMetricService(m.reg, secret.NewLogger(m.log.With(zap.String("service", "secret")), secret.NewService(secretStore)))
 
 	switch m.secretStore {
 	case "bolt":
@@ -861,16 +858,18 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		Addr: m.httpBindAddress,
 	}
 
-	flagger := feature.DefaultFlagger()
-	if len(m.featureFlags) > 0 {
-		f, err := overrideflagger.Make(m.featureFlags, feature.ByKey)
-		if err != nil {
-			m.log.Error("Failed to configure feature flag overrides",
-				zap.Error(err), zap.Any("overrides", m.featureFlags))
-			return err
+	if m.flagger == nil {
+		m.flagger = feature.DefaultFlagger()
+		if len(m.featureFlags) > 0 {
+			f, err := overrideflagger.Make(m.featureFlags, feature.ByKey)
+			if err != nil {
+				m.log.Error("Failed to configure feature flag overrides",
+					zap.Error(err), zap.Any("overrides", m.featureFlags))
+				return err
+			}
+			m.log.Info("Running with feature flag overrides", zap.Any("overrides", m.featureFlags))
+			m.flagger = f
 		}
-		m.log.Info("Running with feature flag overrides", zap.Any("overrides", m.featureFlags))
-		flagger = f
 	}
 
 	var sessionSvc platform.SessionService
@@ -878,7 +877,18 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		sessionSvc = session.NewService(session.NewStorage(inmem.NewSessionStore()), userSvc, userResourceSvc, authSvc, time.Duration(m.sessionLength)*time.Minute)
 		sessionSvc = session.NewSessionMetrics(m.reg, sessionSvc)
 		sessionSvc = session.NewSessionLogger(m.log.With(zap.String("service", "session")), sessionSvc)
-		sessionSvc = session.NewServiceController(flagger, m.kvService, sessionSvc)
+		sessionSvc = session.NewServiceController(m.flagger, m.kvService, sessionSvc)
+	}
+
+	var labelSvc platform.LabelService
+	{
+		labelsStore, err := label.NewStore(m.kvStore)
+		if err != nil {
+			m.log.Error("Failed creating new labels store", zap.Error(err))
+			return err
+		}
+		ls := label.NewService(labelsStore)
+		labelSvc = label.NewLabelController(m.flagger, m.kvService, ls)
 	}
 
 	m.apibackend = &http.APIBackend{
@@ -912,6 +922,7 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		PasswordsService:                passwdsSvc,
 		InfluxQLService:                 storageQueryService,
 		FluxService:                     storageQueryService,
+		FluxLanguageService:             fluxlang.DefaultService,
 		TaskService:                     taskSvc,
 		TelegrafService:                 telegrafSvc,
 		NotificationRuleStore:           notificationRuleSvc,
@@ -925,7 +936,7 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		OrgLookupService:                m.kvService,
 		WriteEventRecorder:              infprom.NewEventRecorder("write"),
 		QueryEventRecorder:              infprom.NewEventRecorder("query"),
-		Flagger:                         flagger,
+		Flagger:                         m.flagger,
 		FlagsHandler:                    feature.NewFlagsHandler(kithttp.ErrorHandler(0), feature.ByKey),
 	}
 
@@ -966,6 +977,11 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		pkgHTTPServer = pkger.NewHTTPServer(pkgServerLogger, pkgSVC)
 	}
 
+	var userHTTPServer *tenant.UserHandler
+	{
+		userHTTPServer = tenant.NewHTTPUserHandler(m.log.With(zap.String("handler", "user")), tenant.NewAuthedUserService(userSvc), tenant.NewAuthedPasswordService(passwdsSvc))
+	}
+
 	var onboardHTTPServer *tenant.OnboardHandler
 	{
 		onboardSvc := tenant.NewOnboardService(store, authSvc)                                            // basic service
@@ -974,6 +990,20 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		onboardSvc = tenant.NewOnboardingLogger(m.log.With(zap.String("handler", "onboard")), onboardSvc) // with logging
 
 		onboardHTTPServer = tenant.NewHTTPOnboardHandler(m.log, onboardSvc)
+	}
+
+	// feature flagging for new labels service
+	var oldLabelHandler nethttp.Handler
+	var labelHandler *label.LabelHandler
+	{
+		b := m.apibackend
+		labelSvcWithOrg := authorizer.NewLabelServiceWithOrg(labelSvc, b.OrgLookupService)
+		oldLabelHandler = http.NewLabelHandler(m.log.With(zap.String("handler", "labels")), labelSvcWithOrg, kithttp.ErrorHandler(0))
+
+		labelSvc = label.NewAuthedLabelService(labelSvc, b.OrgLookupService)
+		labelSvc = label.NewLabelLogger(m.log.With(zap.String("handler", "labels")), labelSvc)
+		labelSvc = label.NewLabelMetrics(m.reg, labelSvc)
+		labelHandler = label.NewHTTPLabelHandler(m.log, labelSvc)
 	}
 
 	// feature flagging for new authorization service
@@ -997,7 +1027,7 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		authService = authorization.NewAuthLogger(authLogger, authService)
 
 		newHandler := authorization.NewHTTPAuthHandler(m.log, authService, ts, lookupSvc)
-		authHTTPServer = kithttp.NewFeatureHandler(feature.NewAuthPackage(), flagger, oldHandler, newHandler, newHandler.Prefix())
+		authHTTPServer = kithttp.NewFeatureHandler(feature.NewAuthPackage(), m.flagger, oldHandler, newHandler, newHandler.Prefix())
 	}
 
 	var oldSessionHandler nethttp.Handler
@@ -1007,13 +1037,24 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		sessionHTTPServer = session.NewSessionHandler(m.log.With(zap.String("handler", "session")), sessionSvc, userSvc, passwdsSvc)
 	}
 
+	var orgHTTPServer *tenant.OrgHandler
+	{
+		secretHandler := secret.NewHandler(m.log, "id", secret.NewAuthedService(secretSvc))
+		urmHandler := tenant.NewURMHandler(m.log.With(zap.String("handler", "urm")), platform.OrgsResourceType, "id", userSvc, tenant.NewAuthedURMService(orgSvc, userResourceSvc))
+		orgHTTPServer = tenant.NewHTTPOrgHandler(m.log.With(zap.String("handler", "org")), orgSvc, urmHandler, labelHandler, secretHandler)
+	}
+
 	{
 		platformHandler := http.NewPlatformHandler(m.apibackend,
 			http.WithResourceHandler(pkgHTTPServer),
 			http.WithResourceHandler(onboardHTTPServer),
 			http.WithResourceHandler(authHTTPServer),
-			http.WithResourceHandler(kithttp.NewFeatureHandler(feature.SessionService(), flagger, oldSessionHandler, sessionHTTPServer.SignInResourceHandler(), sessionHTTPServer.SignInResourceHandler().Prefix())),
-			http.WithResourceHandler(kithttp.NewFeatureHandler(feature.SessionService(), flagger, oldSessionHandler, sessionHTTPServer.SignOutResourceHandler(), sessionHTTPServer.SignOutResourceHandler().Prefix())),
+			http.WithResourceHandler(kithttp.NewFeatureHandler(feature.NewLabelPackage(), m.flagger, oldLabelHandler, labelHandler, labelHandler.Prefix())),
+			http.WithResourceHandler(kithttp.NewFeatureHandler(feature.SessionService(), m.flagger, oldSessionHandler, sessionHTTPServer.SignInResourceHandler(), sessionHTTPServer.SignInResourceHandler().Prefix())),
+			http.WithResourceHandler(kithttp.NewFeatureHandler(feature.SessionService(), m.flagger, oldSessionHandler, sessionHTTPServer.SignOutResourceHandler(), sessionHTTPServer.SignOutResourceHandler().Prefix())),
+			http.WithResourceHandler(userHTTPServer.MeResourceHandler()),
+			http.WithResourceHandler(userHTTPServer.UserResourceHandler()),
+			http.WithResourceHandler(orgHTTPServer),
 		)
 
 		httpLogger := m.log.With(zap.String("service", "http"))

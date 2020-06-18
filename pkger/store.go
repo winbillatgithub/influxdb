@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/influxdata/influxdb/v2"
@@ -17,6 +18,7 @@ type (
 
 		Name        string             `json:"name"`
 		Description string             `json:"description"`
+		Sources     []string           `json:"sources,omitempty"`
 		URLs        []string           `json:"urls,omitempty"`
 		Resources   []entStackResource `json:"resources,omitempty"`
 
@@ -42,6 +44,8 @@ type (
 type StoreKV struct {
 	kvStore   kv.Store
 	indexBase *kv.IndexStore
+
+	once sync.Once
 }
 
 var _ Store = (*StoreKV)(nil)
@@ -50,7 +54,7 @@ var _ Store = (*StoreKV)(nil)
 // want to init it if you want to have this init donezo at startup. If not it'll lazy
 // load the buckets as they are used.
 func NewStoreKV(store kv.Store) *StoreKV {
-	const resource = "pkg stack"
+	const resource = "stack"
 
 	storeKV := &StoreKV{
 		kvStore: store,
@@ -88,7 +92,7 @@ func (s *StoreKV) ListStacks(ctx context.Context, orgID influxdb.ID, f ListFilte
 	}
 
 	var stacks []Stack
-	err = s.kvStore.View(ctx, func(tx kv.Tx) error {
+	err = s.view(ctx, func(tx kv.Tx) error {
 		return s.indexBase.Find(ctx, tx, kv.FindOpts{
 			CaptureFn: func(key []byte, decodedVal interface{}) error {
 				stack, err := convertStackEntToStack(decodedVal.(*entStack))
@@ -165,7 +169,7 @@ func (s *StoreKV) listStacksByID(ctx context.Context, orgID influxdb.ID, stackID
 // ReadStackByID reads a stack by the provided ID.
 func (s *StoreKV) ReadStackByID(ctx context.Context, id influxdb.ID) (Stack, error) {
 	var stack Stack
-	err := s.kvStore.View(ctx, func(tx kv.Tx) error {
+	err := s.view(ctx, func(tx kv.Tx) error {
 		decodedEnt, err := s.indexBase.FindEnt(ctx, tx, kv.Entity{PK: kv.EncID(id)})
 		if err != nil {
 			return err
@@ -256,6 +260,21 @@ func (s *StoreKV) indexStoreBase(resource string) *kv.StoreBase {
 	return kv.NewStoreBase(resource, indexBucket, kv.EncUniqKey, kv.EncIDKey, kv.DecIndexID, decValToEntFn)
 }
 
+func (s *StoreKV) view(ctx context.Context, fn func(tx kv.Tx) error) error {
+	if err := s.lazyInit(ctx); err != nil {
+		return err
+	}
+	return s.kvStore.View(ctx, fn)
+}
+
+func (s *StoreKV) lazyInit(ctx context.Context) error {
+	var err error
+	s.once.Do(func() {
+		err = s.Init(ctx)
+	})
+	return err
+}
+
 func convertStackToEnt(stack Stack) (kv.Entity, error) {
 	idBytes, err := stack.ID.Encode()
 	if err != nil {
@@ -274,6 +293,7 @@ func convertStackToEnt(stack Stack) (kv.Entity, error) {
 		Description: stack.Description,
 		CreatedAt:   stack.CreatedAt,
 		UpdatedAt:   stack.UpdatedAt,
+		Sources:     stack.Sources,
 		URLs:        stack.URLs,
 	}
 
@@ -305,6 +325,7 @@ func convertStackEntToStack(ent *entStack) (Stack, error) {
 	stack := Stack{
 		Name:        ent.Name,
 		Description: ent.Description,
+		Sources:     ent.Sources,
 		URLs:        ent.URLs,
 		CRUDLog: influxdb.CRUDLog{
 			CreatedAt: ent.CreatedAt,

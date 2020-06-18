@@ -9,18 +9,12 @@ import (
 )
 
 type Service struct {
-	store      *Store
-	urmCreator UserResourceMappingCreator
+	store *Store
 }
 
-type UserResourceMappingCreator interface {
-	CreateUserResourceMappingForOrg(ctx context.Context, tx kv.Tx, orgID influxdb.ID, resID influxdb.ID, resType influxdb.ResourceType) error
-}
-
-func NewService(st *Store, urmCreator UserResourceMappingCreator) influxdb.LabelService {
+func NewService(st *Store) influxdb.LabelService {
 	return &Service{
-		store:      st,
-		urmCreator: urmCreator, // todo (al) this can be removed once URMs are removed from the Label service
+		store: st,
 	}
 }
 
@@ -41,10 +35,6 @@ func (s *Service) CreateLabel(ctx context.Context, l *influxdb.Label) error {
 		}
 
 		if err := s.store.CreateLabel(ctx, tx, l); err != nil {
-			return err
-		}
-
-		if err := s.urmCreator.CreateUserResourceMappingForOrg(ctx, tx, l.OrgID, l.ID, influxdb.LabelsResourceType); err != nil {
 			return err
 		}
 
@@ -148,6 +138,7 @@ func (s *Service) CreateLabelMapping(ctx context.Context, m *influxdb.LabelMappi
 		if _, err := s.store.GetLabel(ctx, tx, m.LabelID); err != nil {
 			return err
 		}
+
 		ls := []*influxdb.Label{}
 		err := s.store.FindResourceLabels(ctx, tx, influxdb.LabelMappingFilter{ResourceID: m.ResourceID, ResourceType: m.ResourceType}, &ls)
 		if err != nil {

@@ -1,15 +1,19 @@
 import {PRESENTATION_MODE_ANIMATION_DELAY} from '../constants'
 
-import {notify} from 'src/shared/actions/notifications'
+import {
+  notify,
+  PublishNotificationAction,
+} from 'src/shared/actions/notifications'
 import {presentationMode} from 'src/shared/copy/notifications'
 
 import {Dispatch} from 'redux'
-import {TimeZone, Theme, NavBarState} from 'src/types'
+import {TimeZone, Theme, NavBarState, NotebookMiniMapState} from 'src/types'
 
 export enum ActionTypes {
   EnablePresentationMode = 'ENABLE_PRESENTATION_MODE',
   DisablePresentationMode = 'DISABLE_PRESENTATION_MODE',
   SetNavBarState = 'SET_NAV_BAR_STATE',
+  SetNotebookMiniMapState = 'SET_NOTEBOOK_MINI_MAP_STATE',
   SetAutoRefresh = 'SET_AUTOREFRESH',
   SetTimeZone = 'SET_APP_TIME_ZONE',
   TemplateControlBarVisibilityToggled = 'TemplateControlBarVisibilityToggledAction',
@@ -20,6 +24,7 @@ export type Action =
   | ReturnType<typeof enablePresentationMode>
   | ReturnType<typeof disablePresentationMode>
   | ReturnType<typeof setNavBarState>
+  | ReturnType<typeof setNotebookMiniMapState>
   | ReturnType<typeof setAutoRefresh>
   | ReturnType<typeof setTimeZone>
   | ReturnType<typeof setTheme>
@@ -37,11 +42,13 @@ export const disablePresentationMode = () =>
   } as const)
 
 export const delayEnablePresentationMode = () => (
-  dispatch: Dispatch<ReturnType<typeof enablePresentationMode>>
+  dispatch: Dispatch<
+    ReturnType<typeof enablePresentationMode> | PublishNotificationAction
+  >
 ): NodeJS.Timer =>
   setTimeout(() => {
     dispatch(enablePresentationMode())
-    notify(presentationMode())
+    dispatch(notify(presentationMode()))
   }, PRESENTATION_MODE_ANIMATION_DELAY)
 
 // persistent state action creators
@@ -52,6 +59,14 @@ export const setNavBarState = (navBarState: NavBarState) =>
   ({
     type: ActionTypes.SetNavBarState,
     navBarState,
+  } as const)
+
+export const setNotebookMiniMapState = (
+  notebookMiniMapState: NotebookMiniMapState
+) =>
+  ({
+    type: ActionTypes.SetNotebookMiniMapState,
+    notebookMiniMapState,
   } as const)
 
 export const setAutoRefresh = (milliseconds: number) =>

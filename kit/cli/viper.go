@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ type Opt struct {
 
 	EnvVar     string
 	Flag       string
+	Hidden     bool
 	Persistent bool
 	Required   bool
 	Short      rune // using rune b/c it guarantees correctness. a short must always be a string of length 1
@@ -51,7 +53,7 @@ type Program struct {
 //
 // This is to simplify the viper/cobra boilerplate.
 func NewCommand(p *Program) *cobra.Command {
-	var cmd = &cobra.Command{
+	cmd := &cobra.Command{
 		Use:  p.Name,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -64,9 +66,35 @@ func NewCommand(p *Program) *cobra.Command {
 	// This normalizes "-" to an underscore in env names.
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 
+	configFile := viper.GetString("CONFIG_FILE")
+	if configFile == "" {
+		// defaults to looking in same directory as program running for
+		// a file `config.yaml`
+		configFile = "config.yaml"
+	}
+	viper.SetConfigFile(configFile)
+
+	// done before we bind flags to viper keys.
+	// order of precedence (1 highest -> 3 lowest):
+	//	1. flags
+	//  2. env vars
+	//	3. config file
+	if err := initializeConfig(); err != nil {
+		panic(fmt.Sprintf("invalid config file[%s] caused panic: %s", configFile, err))
+	}
 	BindOptions(cmd, p.Opts)
 
 	return cmd
+}
+
+func initializeConfig() error {
+	err := viper.ReadInConfig()
+	if err != nil && !os.IsNotExist(err) {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return err
+		}
+	}
+	return nil
 }
 
 // BindOptions adds opts to the specified command and automatically
@@ -177,6 +205,12 @@ func BindOptions(cmd *cobra.Command, opts []Opt) {
 			// if you get a panic here, sorry about that!
 			// anyway, go ahead and make a PR and add another type.
 			panic(fmt.Errorf("unknown destination type %t", o.DestP))
+		}
+
+		// so weirdness with the flagset her, the flag must be set before marking it
+		// hidden. This is in contrast to the MarkRequired, which can be set before...
+		if o.Hidden {
+			flagset.MarkHidden(o.Flag)
 		}
 	}
 }

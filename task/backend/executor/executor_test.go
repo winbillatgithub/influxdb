@@ -19,6 +19,7 @@ import (
 	tracetest "github.com/influxdata/influxdb/v2/kit/tracing/testing"
 	"github.com/influxdata/influxdb/v2/kv"
 	"github.com/influxdata/influxdb/v2/query"
+	"github.com/influxdata/influxdb/v2/query/fluxlang"
 	"github.com/influxdata/influxdb/v2/task/backend"
 	"github.com/influxdata/influxdb/v2/task/backend/scheduler"
 	"github.com/opentracing/opentracing-go"
@@ -52,7 +53,9 @@ func taskExecutorSystem(t *testing.T) tes {
 		qs  = query.QueryServiceBridge{
 			AsyncQueryService: aqs,
 		}
-		i           = kv.NewService(zaptest.NewLogger(t), inmem.NewKVStore())
+		i = kv.NewService(zaptest.NewLogger(t), inmem.NewKVStore(), kv.ServiceConfig{
+			FluxLanguageService: fluxlang.DefaultService,
+		})
 		tcs         = &taskControlService{TaskControlService: i}
 		ex, metrics = NewExecutor(zaptest.NewLogger(t), qs, i, i, tcs)
 	)
@@ -449,7 +452,8 @@ func testIteratorFailure(t *testing.T) {
 			exhaustResultIterators: func(flux.Result) error {
 				return errors.New("something went wrong exhausting iterator")
 			},
-			buildCompiler: NewASTCompiler,
+			systemBuildCompiler:    NewASTCompiler,
+			nonSystemBuildCompiler: NewASTCompiler,
 		}
 	}}
 
@@ -529,6 +533,51 @@ func testErrorHandling(t *testing.T) {
 			t.Fatal("expected task to be deactivated after permanent error")
 		}
 	*/
+}
+
+func TestPromiseFailure(t *testing.T) {
+	t.Parallel()
+
+	tes := taskExecutorSystem(t)
+
+	var (
+		script = fmt.Sprintf(fmtTestScript, t.Name())
+		ctx    = icontext.SetAuthorizer(context.Background(), tes.tc.Auth)
+		span   = opentracing.GlobalTracer().StartSpan("test-span")
+	)
+	ctx = opentracing.ContextWithSpan(ctx, span)
+
+	task, err := tes.i.CreateTask(ctx, influxdb.TaskCreate{OrganizationID: tes.tc.OrgID, OwnerID: tes.tc.Auth.GetUserID(), Flux: script})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tes.i.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	promise, err := tes.ex.PromisedExecute(ctx, scheduler.ID(task.ID), time.Unix(123, 0), time.Unix(126, 0))
+	if err == nil {
+		t.Fatal("failed to error on promise create")
+	}
+
+	if promise != nil {
+		t.Fatalf("expected no promise but recieved one: %+v", promise)
+	}
+
+	runs, _, err := tes.i.FindRuns(context.Background(), influxdb.RunFilter{Task: task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 runs on failed promise: got: %d, %#v", len(runs), runs[0])
+	}
+
+	if runs[0].Status != "failed" {
+		t.Fatal("failed to set failed state")
+	}
+
 }
 
 type taskControlService struct {

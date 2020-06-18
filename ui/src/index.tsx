@@ -50,13 +50,16 @@ import BucketsIndex from 'src/buckets/containers/BucketsIndex'
 import TemplatesIndex from 'src/templates/containers/TemplatesIndex'
 import TelegrafsPage from 'src/telegrafs/containers/TelegrafsPage'
 import ClientLibrariesPage from 'src/clientLibraries/containers/ClientLibrariesPage'
+import ClientArduinoOverlay from 'src/clientLibraries/components/ClientArduinoOverlay'
 import ClientCSharpOverlay from 'src/clientLibraries/components/ClientCSharpOverlay'
 import ClientGoOverlay from 'src/clientLibraries/components/ClientGoOverlay'
 import ClientJavaOverlay from 'src/clientLibraries/components/ClientJavaOverlay'
 import ClientJSOverlay from 'src/clientLibraries/components/ClientJSOverlay'
+import ClientKotlinOverlay from 'src/clientLibraries/components/ClientKotlinOverlay'
 import ClientPHPOverlay from 'src/clientLibraries/components/ClientPHPOverlay'
 import ClientPythonOverlay from 'src/clientLibraries/components/ClientPythonOverlay'
 import ClientRubyOverlay from 'src/clientLibraries/components/ClientRubyOverlay'
+import ClientScalaOverlay from 'src/clientLibraries/components/ClientScalaOverlay'
 import TemplateImportOverlay from 'src/templates/components/TemplateImportOverlay'
 import TemplateExportOverlay from 'src/templates/components/TemplateExportOverlay'
 import VariablesIndex from 'src/variables/containers/VariablesIndex'
@@ -96,8 +99,12 @@ import NewEndpointOverlay from 'src/notifications/endpoints/components/NewEndpoi
 import EditEndpointOverlay from 'src/notifications/endpoints/components/EditEndpointOverlay'
 import NoOrgsPage from 'src/organizations/containers/NoOrgsPage'
 
+import {CommunityTemplatesIndex} from 'src/templates/containers/CommunityTemplatesIndex'
+import {CommunityTemplateImportOverlay} from 'src/templates/components/CommunityTemplateImportOverlay'
+
 // Utilities
 import {isFlagEnabled} from 'src/shared/utils/featureFlag'
+import {writeNavigationTimingMetrics} from 'src/cloud/utils/rum'
 
 // Overlays
 import OverlayHandler, {
@@ -359,6 +366,10 @@ class Root extends PureComponent {
                                 component={ClientLibrariesPage}
                               >
                                 <Route
+                                  path="arduino"
+                                  component={ClientArduinoOverlay}
+                                />
+                                <Route
                                   path="csharp"
                                   component={ClientCSharpOverlay}
                                 />
@@ -372,6 +383,10 @@ class Root extends PureComponent {
                                   component={ClientJSOverlay}
                                 />
                                 <Route
+                                  path="kotlin"
+                                  component={ClientKotlinOverlay}
+                                />
+                                <Route
                                   path="php"
                                   component={ClientPHPOverlay}
                                 />
@@ -382,6 +397,10 @@ class Root extends PureComponent {
                                 <Route
                                   path="ruby"
                                   component={ClientRubyOverlay}
+                                />
+                                <Route
+                                  path="scala"
+                                  component={ClientScalaOverlay}
                                 />
                               </Route>
                             </Route>
@@ -412,27 +431,51 @@ class Root extends PureComponent {
                                   component={UpdateVariableOverlay}
                                 />
                               </Route>
-                              <Route
-                                path="templates"
-                                component={TemplatesIndex}
-                              >
+                              {isFlagEnabled('communityTemplates') ? (
                                 <Route
-                                  path="import"
-                                  component={TemplateImportOverlay}
-                                />
+                                  path="templates"
+                                  component={CommunityTemplatesIndex}
+                                >
+                                  <Route
+                                    path="import/:templateName"
+                                    component={CommunityTemplateImportOverlay}
+                                  />
+                                  <Route
+                                    path=":id/export"
+                                    component={TemplateExportOverlay}
+                                  />
+                                  <Route
+                                    path=":id/view"
+                                    component={TemplateViewOverlay}
+                                  />
+                                  <Route
+                                    path=":id/static/view"
+                                    component={StaticTemplateViewOverlay}
+                                  />
+                                </Route>
+                              ) : (
                                 <Route
-                                  path=":id/export"
-                                  component={TemplateExportOverlay}
-                                />
-                                <Route
-                                  path=":id/view"
-                                  component={TemplateViewOverlay}
-                                />
-                                <Route
-                                  path=":id/static/view"
-                                  component={StaticTemplateViewOverlay}
-                                />
-                              </Route>
+                                  path="templates"
+                                  component={TemplatesIndex}
+                                >
+                                  <Route
+                                    path="import"
+                                    component={TemplateImportOverlay}
+                                  />
+                                  <Route
+                                    path=":id/export"
+                                    component={TemplateExportOverlay}
+                                  />
+                                  <Route
+                                    path=":id/view"
+                                    component={TemplateViewOverlay}
+                                  />
+                                  <Route
+                                    path=":id/static/view"
+                                    component={StaticTemplateViewOverlay}
+                                  />
+                                </Route>
+                              )}
                               <Route path="labels" component={LabelsIndex} />
                               <Route path="about" component={OrgProfilePage}>
                                 <Route
@@ -502,3 +545,7 @@ class Root extends PureComponent {
 if (rootNode) {
   render(<Root />, rootNode)
 }
+
+window.addEventListener('load', () => {
+  writeNavigationTimingMetrics()
+})

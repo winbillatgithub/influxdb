@@ -14,8 +14,7 @@
 # SUBDIRS are directories that have their own Makefile.
 # It is required that all SUBDIRS have the `all` and `clean` targets.
 SUBDIRS := http ui chronograf query storage
-# The 'libflux' tag is required for instructing the flux to be compiled with the Rust parser
-GO_TAGS=libflux
+GO_TAGS=
 GO_ARGS=-tags '$(GO_TAGS)'
 ifeq ($(OS), Windows_NT)
 	VERSION := $(shell git describe --exact-match --tags 2>nil)
@@ -31,13 +30,14 @@ endif
 
 
 # Test vars can be used by all recursive Makefiles
+export PKG_CONFIG:=$(PWD)/scripts/pkg-config.sh
 export GOOS=$(shell go env GOOS)
-export GO_BUILD=env GO111MODULE=on CGO_LDFLAGS="$$(cat .cgo_ldflags)" go build $(GO_ARGS) -ldflags "$(LDFLAGS)"
-export GO_INSTALL=env GO111MODULE=on CGO_LDFLAGS="$$(cat .cgo_ldflags)" go install $(GO_ARGS) -ldflags "$(LDFLAGS)"
-export GO_TEST=env FLUX_PARSER_TYPE=rust GOTRACEBACK=all GO111MODULE=on CGO_LDFLAGS="$$(cat .cgo_ldflags)" go test $(GO_ARGS)
+export GO_BUILD=env GO111MODULE=on go build $(GO_ARGS) -ldflags "$(LDFLAGS)"
+export GO_INSTALL=env GO111MODULE=on go install $(GO_ARGS) -ldflags "$(LDFLAGS)"
+export GO_TEST=env GOTRACEBACK=all GO111MODULE=on go test $(GO_ARGS)
 # Do not add GO111MODULE=on to the call to go generate so it doesn't pollute the environment.
 export GO_GENERATE=go generate $(GO_ARGS)
-export GO_VET=env GO111MODULE=on CGO_LDFLAGS="$$(cat .cgo_ldflags)" go vet $(GO_ARGS)
+export GO_VET=env GO111MODULE=on go vet $(GO_ARGS)
 export GO_RUN=env GO111MODULE=on go run $(GO_ARGS)
 export PATH := $(PWD)/bin/$(GOOS):$(PATH)
 
@@ -78,11 +78,13 @@ $(SUBDIRS):
 #
 # Define targets for commands
 #
-$(CMDS): $(SOURCES) libflux
+$(CMDS): $(SOURCES)
 	$(GO_BUILD) -o $@ ./cmd/$(shell basename "$@")
 
 # Ease of use build for just the go binary
 influxd: bin/$(GOOS)/influxd
+
+influx: bin/$(GOOS)/influx
 
 #
 # Define targets for the web ui
@@ -110,12 +112,6 @@ ui_client:
 # Define action only targets
 #
 
-libflux: .cgo_ldflags
-
-.cgo_ldflags: go.mod
-	$(GO_RUN) github.com/influxdata/flux/internal/cmd/flux-config --libs --verbose > .cgo_ldflags.tmp
-	mv .cgo_ldflags.tmp .cgo_ldflags
-
 fmt: $(SOURCES_NO_VENDOR)
 	gofmt -w -s $^
 
@@ -140,7 +136,7 @@ generate: $(SUBDIRS)
 test-js: node_modules
 	make -C ui test
 
-test-go: libflux
+test-go:
 	$(GO_TEST) ./...
 
 test-promql-e2e:
@@ -152,13 +148,13 @@ test-integration:
 
 test: test-go test-js
 
-test-go-race: libflux
+test-go-race:
 	$(GO_TEST) -v -race -count=1 ./...
 
-vet: libflux
+vet:
 	$(GO_VET) -v ./...
 
-bench: libflux
+bench:
 	$(GO_TEST) -bench=. -run=^$$ ./...
 
 build: all
@@ -166,22 +162,26 @@ build: all
 goreleaser:
 	curl -sfL -o goreleaser-install https://install.goreleaser.com/github.com/goreleaser/goreleaser.sh
 	sh goreleaser-install v0.135.0
+	go build -o $(GOPATH)/bin/pkg-config github.com/influxdata/pkg-config
+	install xcc.sh $(GOPATH)/bin/xcc
 
+# Parallelism for goreleaser must be set to 1 so it doesn't
+# attempt to invoke pkg-config, which invokes cargo,
+# for multiple targets at the same time.
 dist: goreleaser
-	./bin/goreleaser --rm-dist --config=.goreleaser-nightly.yml
+	./bin/goreleaser -p 1 --skip-validate --rm-dist --config=.goreleaser-nightly.yml
 
 nightly: goreleaser
-	./bin/goreleaser --rm-dist --config=.goreleaser-nightly.yml
+	./bin/goreleaser -p 1 --skip-validate --rm-dist --config=.goreleaser-nightly.yml
 
 release: goreleaser
 	git checkout -- go.sum # avoid dirty git repository caused by go install
-	./bin/goreleaser release --rm-dist
+	./bin/goreleaser release -p 1 --rm-dist
 
 clean:
 	@for d in $(SUBDIRS); do $(MAKE) -C $$d clean; done
 	$(RM) -r bin
 	$(RM) -r dist
-	$(RM) .cgo_ldflags
 
 define CHRONOGIRAFFE
              ._ o o
