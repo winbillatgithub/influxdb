@@ -18,6 +18,7 @@ require (
 	github.com/gogo/protobuf v1.1.1
 	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db
 	github.com/google/go-cmp v0.4.0
+	github.com/google/gops v0.3.10 // indirect
 	github.com/influxdata/flux v0.65.0
 	github.com/influxdata/influxql v1.1.0
 	github.com/influxdata/roaring v0.4.13-0.20180809181101-fc520f41fab6
@@ -38,15 +39,16 @@ require (
 	github.com/prometheus/client_golang v1.0.0
 	github.com/retailnext/hllpp v1.0.1-0.20180308014038-101a6d2f8b52
 	github.com/segmentio/kafka-go v0.2.0 // indirect
+	github.com/shirou/gopsutil v2.20.5+incompatible // indirect
 	github.com/smartystreets/goconvey v1.6.4 // indirect
 	github.com/spf13/cast v1.3.0
 	github.com/tinylib/msgp v1.0.2
 	github.com/willf/bitset v1.1.3 // indirect
-	github.com/xlab/treeprint v0.0.0-20180616005107-d6fb6747feb6
+	github.com/xlab/treeprint v1.0.0
 	go.uber.org/zap v1.9.1
 	golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
-	golang.org/x/sys v0.0.0-20200107162124-548cf772de50
+	golang.org/x/sys v0.0.0-20200625212154-ddb9806d33ae
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
 	gonum.org/v1/gonum v0.6.0 // indirect
