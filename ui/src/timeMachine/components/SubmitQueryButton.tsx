@@ -1,6 +1,6 @@
 // Libraries
 import React, {PureComponent} from 'react'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps} from 'react-redux'
 
 // Components
 import {
@@ -17,29 +17,23 @@ import {notify} from 'src/shared/actions/notifications'
 
 // Utils
 import {getActiveTimeMachine, getActiveQuery} from 'src/timeMachine/selectors'
-import {reportSimpleQueryPerformanceEvent} from 'src/cloud/utils/reporting'
+import {event} from 'src/cloud/utils/reporting'
 import {queryCancelRequest} from 'src/shared/copy/notifications'
 
 // Types
 import {AppState, RemoteDataState} from 'src/types'
 
-interface StateProps {
-  submitButtonDisabled: boolean
-  queryStatus: RemoteDataState
-}
-
-interface DispatchProps {
-  onSubmit: typeof saveAndExecuteQueries | (() => void)
-  onNotify?: typeof notify
-}
-
 interface OwnProps {
   text?: string
   icon?: IconFont
   testID?: string
+  className?: string
 }
 
-type Props = OwnProps & StateProps & DispatchProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = OwnProps & ReduxProps
+
+const DELAYTIME = 2000
 
 class SubmitQueryButton extends PureComponent<Props> {
   public static defaultProps = {
@@ -47,31 +41,55 @@ class SubmitQueryButton extends PureComponent<Props> {
     testID: 'time-machine-submit-button',
   }
 
-  public render() {
-    const {text, queryStatus, icon, testID} = this.props
+  public state = {
+    timer: false,
+  }
 
-    if (queryStatus === RemoteDataState.Loading) {
+  private timer
+
+  public componentDidUpdate(prevProps) {
+    if (
+      this.props.queryStatus !== prevProps.queryStatus &&
+      prevProps.queryStatus === RemoteDataState.Loading
+    ) {
+      if (this.timer) {
+        clearTimeout(this.timer)
+        delete this.timer
+      }
+
+      this.setState({timer: false})
+    }
+  }
+
+  public render() {
+    const {text, queryStatus, icon, testID, className} = this.props
+
+    if (queryStatus === RemoteDataState.Loading && this.state.timer === true) {
       return (
         <Button
           text="Cancel"
+          className={className}
           icon={icon}
           size={ComponentSize.Small}
           status={ComponentStatus.Default}
           onClick={this.handleCancelClick}
           color={ComponentColor.Danger}
           testID={testID}
+          style={{width: '100px'}}
         />
       )
     }
     return (
       <Button
         text={text}
+        className={className}
         icon={icon}
         size={ComponentSize.Small}
         status={this.buttonStatus}
         onClick={this.handleClick}
         color={ComponentColor.Primary}
         testID={testID}
+        style={{width: '100px'}}
       />
     )
   }
@@ -95,10 +113,14 @@ class SubmitQueryButton extends PureComponent<Props> {
   private handleClick = (): void => {
     // Optimistic UI, set the state to loading when the event
     // happens rather than when the event trickles down to execution
-    reportSimpleQueryPerformanceEvent('SubmitQueryButton click')
+    event('SubmitQueryButton click')
     // We need to instantiate a new AbortController per request
     // In order to allow for requests after cancellations:
     // https://stackoverflow.com/a/56548348/7963795
+
+    this.timer = setTimeout(() => {
+      this.setState({timer: true})
+    }, DELAYTIME)
     this.abortController = new AbortController()
     this.props.onSubmit(this.abortController)
   }
@@ -128,7 +150,6 @@ const mdtp = {
   onNotify: notify,
 }
 
-export default connect<StateProps, DispatchProps>(
-  mstp,
-  mdtp
-)(SubmitQueryButton)
+const connector = connect(mstp, mdtp)
+
+export default connector(SubmitQueryButton)

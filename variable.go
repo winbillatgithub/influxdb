@@ -127,6 +127,15 @@ func (m *Variable) Valid() error {
 		return fmt.Errorf("invalid arguments type")
 	}
 
+	inValidNames := [11]string{"and", "import", "not", "return", "option", "test", "empty", "in", "or", "package", "builtin"}
+
+	for x := range inValidNames {
+
+		if m.Name == inValidNames[x] {
+			return fmt.Errorf("%q is a protected variable name", inValidNames[x])
+		}
+	}
+
 	return nil
 }
 
@@ -169,7 +178,7 @@ func (a *VariableArguments) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Decode the polymorphic VariableArguments.Values field into the approriate struct
+	// Decode the polymorphic VariableArguments.Values field into the appropriate struct
 	switch aux.Type {
 	case "constant":
 		values, ok := aux.Values.([]interface{})

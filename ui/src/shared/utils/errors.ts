@@ -3,6 +3,7 @@ import HoneyBadger from 'honeybadger-js'
 import {CLOUD, GIT_SHA} from 'src/shared/constants'
 
 import {getUserFlags} from 'src/shared/utils/featureFlag'
+import {event} from 'src/cloud/utils/reporting'
 
 if (CLOUD) {
   HoneyBadger.configure({
@@ -44,6 +45,15 @@ export const reportError = (
 
   if (CLOUD) {
     HoneyBadger.notify(error, {context, ...options})
+
+    let errorType = 'generic (untagged) error'
+    if (options.name) {
+      errorType = options.name
+    } else if (options.component) {
+      errorType = options.component
+    }
+
+    event('ui error', {error: errorType}, {errorCount: 1})
   } else {
     const honeyBadgerContext = (HoneyBadger as any).context
     /* eslint-disable no-console */

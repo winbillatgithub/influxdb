@@ -28,11 +28,8 @@ const CustomizeCheckQueryButton: FC<DispatchProps> = ({
   )
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
   onLoadCustomCheckQueryState: loadCustomCheckQueryState,
 }
 
-export default connect<{}, DispatchProps>(
-  null,
-  mdtp
-)(CustomizeCheckQueryButton)
+export default connect<{}, DispatchProps>(null, mdtp)(CustomizeCheckQueryButton)

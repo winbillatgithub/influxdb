@@ -3,9 +3,10 @@ import View from './view'
 
 register({
   type: 'test',
+  family: 'test',
   component: View,
   priority: -1,
-  disabled: true,
+  featureFlag: 'notebook-panel--test-flux',
   button: 'Flux Result Tester',
   initial: {
     panelVisibility: 'visible',

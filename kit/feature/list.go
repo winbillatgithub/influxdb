@@ -128,32 +128,18 @@ func PushDownWindowAggregateMean() BoolFlag {
 	return pushDownWindowAggregateMean
 }
 
-var pushDownWindowAggregateFirst = MakeBoolFlag(
-	"Push Down Window Aggregate First",
-	"pushDownWindowAggregateFirst",
+var groupWindowAggregateTranspose = MakeBoolFlag(
+	"Group Window Aggregate Transpose",
+	"groupWindowAggregateTranspose",
 	"Query Team",
 	false,
 	Temporary,
 	false,
 )
 
-// PushDownWindowAggregateFirst - Enable First variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateFirst() BoolFlag {
-	return pushDownWindowAggregateFirst
-}
-
-var pushDownWindowAggregateLast = MakeBoolFlag(
-	"Push Down Window Aggregate Last",
-	"pushDownWindowAggregateLast",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownWindowAggregateLast - Enable Last variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateLast() BoolFlag {
-	return pushDownWindowAggregateLast
+// GroupWindowAggregateTranspose - Enables the GroupWindowAggregateTransposeRule for all enabled window aggregates
+func GroupWindowAggregateTranspose() BoolFlag {
+	return groupWindowAggregateTranspose
 }
 
 var newAuth = MakeBoolFlag(
@@ -168,76 +154,6 @@ var newAuth = MakeBoolFlag(
 // NewAuthPackage - Enables the refactored authorization api
 func NewAuthPackage() BoolFlag {
 	return newAuth
-}
-
-var sessionService = MakeBoolFlag(
-	"Session Service",
-	"sessionService",
-	"Lyon Hill",
-	false,
-	Temporary,
-	true,
-)
-
-// SessionService - A temporary switching system for the new session system
-func SessionService() BoolFlag {
-	return sessionService
-}
-
-var pushDownGroupAggregateCount = MakeBoolFlag(
-	"Push Down Group Aggregate Count",
-	"pushDownGroupAggregateCount",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownGroupAggregateCount - Enable the count variant of PushDownGroupAggregate planner rule
-func PushDownGroupAggregateCount() BoolFlag {
-	return pushDownGroupAggregateCount
-}
-
-var pushDownGroupAggregateSum = MakeBoolFlag(
-	"Push Down Group Aggregate Sum",
-	"pushDownGroupAggregateSum",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownGroupAggregateSum - Enable the sum variant of PushDownGroupAggregate planner rule
-func PushDownGroupAggregateSum() BoolFlag {
-	return pushDownGroupAggregateSum
-}
-
-var pushDownGroupAggregateFirst = MakeBoolFlag(
-	"Push Down Group Aggregate First",
-	"pushDownGroupAggregateFirst",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownGroupAggregateFirst - Enable the first variant of PushDownGroupAggregate planner rule
-func PushDownGroupAggregateFirst() BoolFlag {
-	return pushDownGroupAggregateFirst
-}
-
-var pushDownGroupAggregateLast = MakeBoolFlag(
-	"Push Down Group Aggregate Last",
-	"pushDownGroupAggregateLast",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownGroupAggregateLast - Enable the last variant of PushDownGroupAggregate planner rule
-func PushDownGroupAggregateLast() BoolFlag {
-	return pushDownGroupAggregateLast
 }
 
 var newLabels = MakeBoolFlag(
@@ -282,6 +198,20 @@ func MemoryOptimizedFill() BoolFlag {
 	return memoryOptimizedFill
 }
 
+var memoryOptimizedSchemaMutation = MakeBoolFlag(
+	"Memory Optimized Schema Mutation",
+	"memoryOptimizedSchemaMutation",
+	"Query Team",
+	false,
+	Temporary,
+	false,
+)
+
+// MemoryOptimizedSchemaMutation - Enable the memory optimized schema mutation functions
+func MemoryOptimizedSchemaMutation() BoolFlag {
+	return memoryOptimizedSchemaMutation
+}
+
 var urmFreeTasks = MakeBoolFlag(
 	"Urm Free Tasks",
 	"urmFreeTasks",
@@ -296,6 +226,62 @@ func UrmFreeTasks() BoolFlag {
 	return urmFreeTasks
 }
 
+var simpleTaskOptionsExtraction = MakeBoolFlag(
+	"Simple Task Options Extraction",
+	"simpleTaskOptionsExtraction",
+	"Brett Buddin",
+	false,
+	Temporary,
+	false,
+)
+
+// SimpleTaskOptionsExtraction - Simplified task options extraction to avoid undefined functions when saving tasks
+func SimpleTaskOptionsExtraction() BoolFlag {
+	return simpleTaskOptionsExtraction
+}
+
+var useUserPermission = MakeBoolFlag(
+	"Use User Permission",
+	"useUserPermission",
+	"Lyon Hill",
+	false,
+	Temporary,
+	false,
+)
+
+// UseUserPermission - When enabled we will use the new user service permission function
+func UseUserPermission() BoolFlag {
+	return useUserPermission
+}
+
+var mergeFiltersRule = MakeBoolFlag(
+	"Merged Filters Rule",
+	"mergeFiltersRule",
+	"Query Team",
+	false,
+	Temporary,
+	false,
+)
+
+// MergedFiltersRule - Create one filter combining multiple single return statements
+func MergedFiltersRule() BoolFlag {
+	return mergeFiltersRule
+}
+
+var notebooks = MakeBoolFlag(
+	"Notebooks",
+	"notebooks",
+	"Monitoring Team",
+	false,
+	Temporary,
+	true,
+)
+
+// Notebooks - Determine if the notebook feature's route and navbar icon are visible to the user
+func Notebooks() BoolFlag {
+	return notebooks
+}
+
 var all = []Flag{
 	appMetrics,
 	backendExample,
@@ -306,40 +292,38 @@ var all = []Flag{
 	pushDownWindowAggregateMin,
 	pushDownWindowAggregateMax,
 	pushDownWindowAggregateMean,
-	pushDownWindowAggregateFirst,
-	pushDownWindowAggregateLast,
+	groupWindowAggregateTranspose,
 	newAuth,
-	sessionService,
-	pushDownGroupAggregateCount,
-	pushDownGroupAggregateSum,
-	pushDownGroupAggregateFirst,
-	pushDownGroupAggregateLast,
 	newLabels,
 	hydratevars,
 	memoryOptimizedFill,
+	memoryOptimizedSchemaMutation,
 	urmFreeTasks,
+	simpleTaskOptionsExtraction,
+	useUserPermission,
+	mergeFiltersRule,
+	notebooks,
 }
 
 var byKey = map[string]Flag{
-	"appMetrics":                   appMetrics,
-	"backendExample":               backendExample,
-	"communityTemplates":           communityTemplates,
-	"frontendExample":              frontendExample,
-	"pushDownWindowAggregateCount": pushDownWindowAggregateCount,
-	"pushDownWindowAggregateSum":   pushDownWindowAggregateSum,
-	"pushDownWindowAggregateMin":   pushDownWindowAggregateMin,
-	"pushDownWindowAggregateMax":   pushDownWindowAggregateMax,
-	"pushDownWindowAggregateMean":  pushDownWindowAggregateMean,
-	"pushDownWindowAggregateFirst": pushDownWindowAggregateFirst,
-	"pushDownWindowAggregateLast":  pushDownWindowAggregateLast,
-	"newAuth":                      newAuth,
-	"sessionService":               sessionService,
-	"pushDownGroupAggregateCount":  pushDownGroupAggregateCount,
-	"pushDownGroupAggregateSum":    pushDownGroupAggregateSum,
-	"pushDownGroupAggregateFirst":  pushDownGroupAggregateFirst,
-	"pushDownGroupAggregateLast":   pushDownGroupAggregateLast,
-	"newLabels":                    newLabels,
-	"hydratevars":                  hydratevars,
-	"memoryOptimizedFill":          memoryOptimizedFill,
-	"urmFreeTasks":                 urmFreeTasks,
+	"appMetrics":                    appMetrics,
+	"backendExample":                backendExample,
+	"communityTemplates":            communityTemplates,
+	"frontendExample":               frontendExample,
+	"pushDownWindowAggregateCount":  pushDownWindowAggregateCount,
+	"pushDownWindowAggregateSum":    pushDownWindowAggregateSum,
+	"pushDownWindowAggregateMin":    pushDownWindowAggregateMin,
+	"pushDownWindowAggregateMax":    pushDownWindowAggregateMax,
+	"pushDownWindowAggregateMean":   pushDownWindowAggregateMean,
+	"groupWindowAggregateTranspose": groupWindowAggregateTranspose,
+	"newAuth":                       newAuth,
+	"newLabels":                     newLabels,
+	"hydratevars":                   hydratevars,
+	"memoryOptimizedFill":           memoryOptimizedFill,
+	"memoryOptimizedSchemaMutation": memoryOptimizedSchemaMutation,
+	"urmFreeTasks":                  urmFreeTasks,
+	"simpleTaskOptionsExtraction":   simpleTaskOptionsExtraction,
+	"useUserPermission":             useUserPermission,
+	"mergeFiltersRule":              mergeFiltersRule,
+	"notebooks":                     notebooks,
 }

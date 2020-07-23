@@ -34,6 +34,12 @@ import {
   postDashboardsLabel as apiPostDashboardsLabel,
   postDashboardsCell as apiPostDashboardsCell,
   patchDashboardsCellsView as apiPatchDashboardsCellsView,
+  deleteStack as apiDeleteStack,
+  getStacks,
+  postTemplatesApply,
+  Error as PkgError,
+  TemplateApply,
+  TemplateSummary,
 } from 'src/client'
 import {addDashboardDefaults} from 'src/schemas/dashboards'
 
@@ -43,6 +49,7 @@ import {
   DashboardTemplate,
   Dashboard,
   TemplateType,
+  InstalledStack,
   Cell,
   CellIncluded,
   LabelIncluded,
@@ -454,4 +461,78 @@ export const createVariableFromTemplate = async (
   } catch (error) {
     console.error(error)
   }
+}
+
+const applyTemplates = async params => {
+  const resp = await postTemplatesApply(params)
+  if (resp.status >= 300) {
+    throw new Error((resp.data as PkgError).message)
+  }
+
+  const summary = resp.data as TemplateSummary
+  return summary
+}
+
+export const reviewTemplate = async (orgID: string, templateUrl: string) => {
+  const params = {
+    data: {
+      dryRun: true,
+      orgID,
+      remotes: [{url: templateUrl}],
+    },
+  }
+
+  return applyTemplates(params)
+}
+
+export const installTemplate = async (
+  orgID: string,
+  templateUrl: string,
+  resourcesToSkip
+) => {
+  const data: TemplateApply = {
+    dryRun: false,
+    orgID,
+    remotes: [{url: templateUrl}],
+  }
+
+  if (Object.keys(resourcesToSkip).length) {
+    const actions = []
+    for (const resourceTemplateName in resourcesToSkip) {
+      actions.push({
+        action: 'skipResource',
+        properties: {
+          kind: resourcesToSkip[resourceTemplateName],
+          resourceTemplateName,
+        },
+      })
+    }
+    data.actions = actions
+  }
+
+  const params = {
+    data,
+  }
+
+  return applyTemplates(params)
+}
+
+export const fetchStacks = async (orgID: string) => {
+  const resp = await getStacks({query: {orgID}})
+
+  if (resp.status >= 300) {
+    throw new Error((resp.data as PkgError).message)
+  }
+
+  return (resp.data as {stacks: InstalledStack[]}).stacks
+}
+
+export const deleteStack = async (stackId, orgID) => {
+  const resp = await apiDeleteStack({stack_id: stackId, query: {orgID}})
+
+  if (resp.status >= 300) {
+    throw new Error((resp.data as PkgError).message)
+  }
+
+  return resp
 }

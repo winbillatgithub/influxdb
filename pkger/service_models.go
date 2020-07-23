@@ -23,7 +23,7 @@ type stateCoordinator struct {
 	labelMappingsToRemove []stateLabelMappingForRemoval
 }
 
-func newStateCoordinator(pkg *Pkg, acts resourceActions) *stateCoordinator {
+func newStateCoordinator(template *Template, acts resourceActions) *stateCoordinator {
 	state := stateCoordinator{
 		mBuckets:    make(map[string]*stateBucket),
 		mChecks:     make(map[string]*stateCheck),
@@ -36,85 +36,97 @@ func newStateCoordinator(pkg *Pkg, acts resourceActions) *stateCoordinator {
 		mVariables:  make(map[string]*stateVariable),
 	}
 
-	for _, pkgBkt := range pkg.buckets() {
-		if acts.skipResource(KindBucket, pkgBkt.PkgName()) {
+	// labels are done first to validate dependencies are accounted for.
+	// when a label is skipped by an action, this will still be accurate
+	// for hte individual labels, and cascades to the resources that are
+	// associated to a label.
+	for _, l := range template.labels() {
+		if acts.skipResource(KindLabel, l.MetaName()) {
 			continue
 		}
-		state.mBuckets[pkgBkt.PkgName()] = &stateBucket{
-			parserBkt:   pkgBkt,
+		state.mLabels[l.MetaName()] = &stateLabel{
+			parserLabel: l,
 			stateStatus: StateStatusNew,
 		}
 	}
-	for _, pkgCheck := range pkg.checks() {
-		if acts.skipResource(KindCheck, pkgCheck.PkgName()) {
+	for _, b := range template.buckets() {
+		if acts.skipResource(KindBucket, b.MetaName()) {
 			continue
 		}
-		state.mChecks[pkgCheck.PkgName()] = &stateCheck{
-			parserCheck: pkgCheck,
-			stateStatus: StateStatusNew,
+		state.mBuckets[b.MetaName()] = &stateBucket{
+			parserBkt:         b,
+			stateStatus:       StateStatusNew,
+			labelAssociations: state.templateToStateLabels(b.labels),
 		}
 	}
-	for _, pkgDash := range pkg.dashboards() {
-		if acts.skipResource(KindDashboard, pkgDash.PkgName()) {
+	for _, c := range template.checks() {
+		if acts.skipResource(KindCheck, c.MetaName()) {
 			continue
 		}
-		state.mDashboards[pkgDash.PkgName()] = &stateDashboard{
-			parserDash:  pkgDash,
-			stateStatus: StateStatusNew,
+		state.mChecks[c.MetaName()] = &stateCheck{
+			parserCheck:       c,
+			stateStatus:       StateStatusNew,
+			labelAssociations: state.templateToStateLabels(c.labels),
 		}
 	}
-	for _, pkgEndpoint := range pkg.notificationEndpoints() {
-		if acts.skipResource(KindNotificationEndpoint, pkgEndpoint.PkgName()) {
+	for _, d := range template.dashboards() {
+		if acts.skipResource(KindDashboard, d.MetaName()) {
 			continue
 		}
-		state.mEndpoints[pkgEndpoint.PkgName()] = &stateEndpoint{
-			parserEndpoint: pkgEndpoint,
-			stateStatus:    StateStatusNew,
+		state.mDashboards[d.MetaName()] = &stateDashboard{
+			parserDash:        d,
+			stateStatus:       StateStatusNew,
+			labelAssociations: state.templateToStateLabels(d.labels),
 		}
 	}
-	for _, pkgLabel := range pkg.labels() {
-		if acts.skipResource(KindLabel, pkgLabel.PkgName()) {
+	for _, e := range template.notificationEndpoints() {
+		if acts.skipResource(KindNotificationEndpoint, e.MetaName()) {
 			continue
 		}
-		state.mLabels[pkgLabel.PkgName()] = &stateLabel{
-			parserLabel: pkgLabel,
-			stateStatus: StateStatusNew,
+		state.mEndpoints[e.MetaName()] = &stateEndpoint{
+			parserEndpoint:    e,
+			stateStatus:       StateStatusNew,
+			labelAssociations: state.templateToStateLabels(e.labels),
 		}
 	}
-	for _, pkgRule := range pkg.notificationRules() {
-		if acts.skipResource(KindNotificationRule, pkgRule.PkgName()) {
+	for _, r := range template.notificationRules() {
+		if acts.skipResource(KindNotificationRule, r.MetaName()) {
 			continue
 		}
-		state.mRules[pkgRule.PkgName()] = &stateRule{
-			parserRule:  pkgRule,
-			stateStatus: StateStatusNew,
+		state.mRules[r.MetaName()] = &stateRule{
+			parserRule:        r,
+			stateStatus:       StateStatusNew,
+			labelAssociations: state.templateToStateLabels(r.labels),
 		}
 	}
-	for _, pkgTask := range pkg.tasks() {
-		if acts.skipResource(KindTask, pkgTask.PkgName()) {
+	for _, task := range template.tasks() {
+		if acts.skipResource(KindTask, task.MetaName()) {
 			continue
 		}
-		state.mTasks[pkgTask.PkgName()] = &stateTask{
-			parserTask:  pkgTask,
-			stateStatus: StateStatusNew,
+		state.mTasks[task.MetaName()] = &stateTask{
+			parserTask:        task,
+			stateStatus:       StateStatusNew,
+			labelAssociations: state.templateToStateLabels(task.labels),
 		}
 	}
-	for _, pkgTele := range pkg.telegrafs() {
-		if acts.skipResource(KindTelegraf, pkgTele.PkgName()) {
+	for _, tele := range template.telegrafs() {
+		if acts.skipResource(KindTelegraf, tele.MetaName()) {
 			continue
 		}
-		state.mTelegrafs[pkgTele.PkgName()] = &stateTelegraf{
-			parserTelegraf: pkgTele,
-			stateStatus:    StateStatusNew,
+		state.mTelegrafs[tele.MetaName()] = &stateTelegraf{
+			parserTelegraf:    tele,
+			stateStatus:       StateStatusNew,
+			labelAssociations: state.templateToStateLabels(tele.labels),
 		}
 	}
-	for _, pkgVar := range pkg.variables() {
-		if acts.skipResource(KindVariable, pkgVar.PkgName()) {
+	for _, v := range template.variables() {
+		if acts.skipResource(KindVariable, v.MetaName()) {
 			continue
 		}
-		state.mVariables[pkgVar.PkgName()] = &stateVariable{
-			parserVar:   pkgVar,
-			stateStatus: StateStatusNew,
+		state.mVariables[v.MetaName()] = &stateVariable{
+			parserVar:         v,
+			stateStatus:       StateStatusNew,
+			labelAssociations: state.templateToStateLabels(v.labels),
 		}
 	}
 
@@ -199,63 +211,63 @@ func (s *stateCoordinator) diff() Diff {
 		diff.Buckets = append(diff.Buckets, b.diffBucket())
 	}
 	sort.Slice(diff.Buckets, func(i, j int) bool {
-		return diff.Buckets[i].PkgName < diff.Buckets[j].PkgName
+		return diff.Buckets[i].MetaName < diff.Buckets[j].MetaName
 	})
 
 	for _, c := range s.mChecks {
 		diff.Checks = append(diff.Checks, c.diffCheck())
 	}
 	sort.Slice(diff.Checks, func(i, j int) bool {
-		return diff.Checks[i].PkgName < diff.Checks[j].PkgName
+		return diff.Checks[i].MetaName < diff.Checks[j].MetaName
 	})
 
 	for _, d := range s.mDashboards {
 		diff.Dashboards = append(diff.Dashboards, d.diffDashboard())
 	}
 	sort.Slice(diff.Dashboards, func(i, j int) bool {
-		return diff.Dashboards[i].PkgName < diff.Dashboards[j].PkgName
+		return diff.Dashboards[i].MetaName < diff.Dashboards[j].MetaName
 	})
 
 	for _, e := range s.mEndpoints {
 		diff.NotificationEndpoints = append(diff.NotificationEndpoints, e.diffEndpoint())
 	}
 	sort.Slice(diff.NotificationEndpoints, func(i, j int) bool {
-		return diff.NotificationEndpoints[i].PkgName < diff.NotificationEndpoints[j].PkgName
+		return diff.NotificationEndpoints[i].MetaName < diff.NotificationEndpoints[j].MetaName
 	})
 
 	for _, l := range s.mLabels {
 		diff.Labels = append(diff.Labels, l.diffLabel())
 	}
 	sort.Slice(diff.Labels, func(i, j int) bool {
-		return diff.Labels[i].PkgName < diff.Labels[j].PkgName
+		return diff.Labels[i].MetaName < diff.Labels[j].MetaName
 	})
 
 	for _, r := range s.mRules {
 		diff.NotificationRules = append(diff.NotificationRules, r.diffRule())
 	}
 	sort.Slice(diff.NotificationRules, func(i, j int) bool {
-		return diff.NotificationRules[i].PkgName < diff.NotificationRules[j].PkgName
+		return diff.NotificationRules[i].MetaName < diff.NotificationRules[j].MetaName
 	})
 
 	for _, t := range s.mTasks {
 		diff.Tasks = append(diff.Tasks, t.diffTask())
 	}
 	sort.Slice(diff.Tasks, func(i, j int) bool {
-		return diff.Tasks[i].PkgName < diff.Tasks[j].PkgName
+		return diff.Tasks[i].MetaName < diff.Tasks[j].MetaName
 	})
 
 	for _, t := range s.mTelegrafs {
 		diff.Telegrafs = append(diff.Telegrafs, t.diffTelegraf())
 	}
 	sort.Slice(diff.Telegrafs, func(i, j int) bool {
-		return diff.Telegrafs[i].PkgName < diff.Telegrafs[j].PkgName
+		return diff.Telegrafs[i].MetaName < diff.Telegrafs[j].MetaName
 	})
 
 	for _, v := range s.mVariables {
 		diff.Variables = append(diff.Variables, v.diffVariable())
 	}
 	sort.Slice(diff.Variables, func(i, j int) bool {
-		return diff.Variables[i].PkgName < diff.Variables[j].PkgName
+		return diff.Variables[i].MetaName < diff.Variables[j].MetaName
 	})
 
 	for _, m := range s.labelMappings {
@@ -273,10 +285,10 @@ func (s *stateCoordinator) diff() Diff {
 		if n.ResType > m.ResType {
 			return false
 		}
-		if n.ResPkgName < m.ResPkgName {
+		if n.ResMetaName < m.ResMetaName {
 			return true
 		}
-		if n.ResPkgName > m.ResPkgName {
+		if n.ResMetaName > m.ResMetaName {
 			return false
 		}
 		return n.LabelName < m.LabelName
@@ -294,7 +306,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.Buckets = append(sum.Buckets, v.summarize())
 	}
 	sort.Slice(sum.Buckets, func(i, j int) bool {
-		return sum.Buckets[i].PkgName < sum.Buckets[j].PkgName
+		return sum.Buckets[i].MetaName < sum.Buckets[j].MetaName
 	})
 
 	for _, c := range s.mChecks {
@@ -304,7 +316,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.Checks = append(sum.Checks, c.summarize())
 	}
 	sort.Slice(sum.Checks, func(i, j int) bool {
-		return sum.Checks[i].PkgName < sum.Checks[j].PkgName
+		return sum.Checks[i].MetaName < sum.Checks[j].MetaName
 	})
 
 	for _, d := range s.mDashboards {
@@ -314,7 +326,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.Dashboards = append(sum.Dashboards, d.summarize())
 	}
 	sort.Slice(sum.Dashboards, func(i, j int) bool {
-		return sum.Dashboards[i].PkgName < sum.Dashboards[j].PkgName
+		return sum.Dashboards[i].MetaName < sum.Dashboards[j].MetaName
 	})
 
 	for _, e := range s.mEndpoints {
@@ -324,7 +336,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.NotificationEndpoints = append(sum.NotificationEndpoints, e.summarize())
 	}
 	sort.Slice(sum.NotificationEndpoints, func(i, j int) bool {
-		return sum.NotificationEndpoints[i].PkgName < sum.NotificationEndpoints[j].PkgName
+		return sum.NotificationEndpoints[i].MetaName < sum.NotificationEndpoints[j].MetaName
 	})
 
 	for _, v := range s.mLabels {
@@ -334,7 +346,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.Labels = append(sum.Labels, v.summarize())
 	}
 	sort.Slice(sum.Labels, func(i, j int) bool {
-		return sum.Labels[i].PkgName < sum.Labels[j].PkgName
+		return sum.Labels[i].MetaName < sum.Labels[j].MetaName
 	})
 
 	for _, v := range s.mRules {
@@ -344,7 +356,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.NotificationRules = append(sum.NotificationRules, v.summarize())
 	}
 	sort.Slice(sum.NotificationRules, func(i, j int) bool {
-		return sum.NotificationRules[i].PkgName < sum.NotificationRules[j].PkgName
+		return sum.NotificationRules[i].MetaName < sum.NotificationRules[j].MetaName
 	})
 
 	for _, t := range s.mTasks {
@@ -354,7 +366,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.Tasks = append(sum.Tasks, t.summarize())
 	}
 	sort.Slice(sum.Tasks, func(i, j int) bool {
-		return sum.Tasks[i].PkgName < sum.Tasks[j].PkgName
+		return sum.Tasks[i].MetaName < sum.Tasks[j].MetaName
 	})
 
 	for _, t := range s.mTelegrafs {
@@ -364,7 +376,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.TelegrafConfigs = append(sum.TelegrafConfigs, t.summarize())
 	}
 	sort.Slice(sum.TelegrafConfigs, func(i, j int) bool {
-		return sum.TelegrafConfigs[i].PkgName < sum.TelegrafConfigs[j].PkgName
+		return sum.TelegrafConfigs[i].MetaName < sum.TelegrafConfigs[j].MetaName
 	})
 
 	for _, v := range s.mVariables {
@@ -374,7 +386,7 @@ func (s *stateCoordinator) summary() Summary {
 		sum.Variables = append(sum.Variables, v.summarize())
 	}
 	sort.Slice(sum.Variables, func(i, j int) bool {
-		return sum.Variables[i].PkgName < sum.Variables[j].PkgName
+		return sum.Variables[i].MetaName < sum.Variables[j].MetaName
 	})
 
 	for _, v := range s.labelMappings {
@@ -385,8 +397,8 @@ func (s *stateCoordinator) summary() Summary {
 		if n.ResourceType != m.ResourceType {
 			return n.ResourceType < m.ResourceType
 		}
-		if n.ResourcePkgName != m.ResourcePkgName {
-			return n.ResourcePkgName < m.ResourcePkgName
+		if n.ResourceMetaName != m.ResourceMetaName {
+			return n.ResourceMetaName < m.ResourceMetaName
 		}
 		return n.LabelName < m.LabelName
 	})
@@ -394,8 +406,21 @@ func (s *stateCoordinator) summary() Summary {
 	return sum
 }
 
-func (s *stateCoordinator) getLabelByPkgName(pkgName string) *stateLabel {
-	return s.mLabels[pkgName]
+func (s *stateCoordinator) getLabelByMetaName(metaName string) (*stateLabel, bool) {
+	l, ok := s.mLabels[metaName]
+	return l, ok
+}
+
+func (s *stateCoordinator) templateToStateLabels(labels []*label) []*stateLabel {
+	var out []*stateLabel
+	for _, l := range labels {
+		stLabel, found := s.getLabelByMetaName(l.MetaName())
+		if !found {
+			continue
+		}
+		out = append(out, stLabel)
+	}
+	return out
 }
 
 func (s *stateCoordinator) addStackState(stack Stack) {
@@ -405,30 +430,30 @@ func (s *stateCoordinator) addStackState(stack Stack) {
 		s.reconcileNotificationDependencies,
 	}
 	for _, reconcileFn := range reconcilers {
-		reconcileFn(stack.Resources)
+		reconcileFn(stack.LatestEvent().Resources)
 	}
 }
 
 func (s *stateCoordinator) reconcileStackResources(stackResources []StackResource) {
 	for _, r := range stackResources {
-		if !s.Contains(r.Kind, r.PkgName) {
-			s.addObjectForRemoval(r.Kind, r.PkgName, r.ID)
+		if !s.Contains(r.Kind, r.MetaName) {
+			s.addObjectForRemoval(r.Kind, r.MetaName, r.ID)
 			continue
 		}
-		s.setObjectID(r.Kind, r.PkgName, r.ID)
+		s.setObjectID(r.Kind, r.MetaName, r.ID)
 	}
 }
 
 func (s *stateCoordinator) reconcileLabelMappings(stackResources []StackResource) {
-	mLabelPkgNameToID := make(map[string]influxdb.ID)
+	mLabelMetaNameToID := make(map[string]influxdb.ID)
 	for _, r := range stackResources {
 		if r.Kind.is(KindLabel) {
-			mLabelPkgNameToID[r.PkgName] = r.ID
+			mLabelMetaNameToID[r.MetaName] = r.ID
 		}
 	}
 
 	for _, r := range stackResources {
-		labels := s.labelAssociations(r.Kind, r.PkgName)
+		labels := s.labelAssociations(r.Kind, r.MetaName)
 		if len(r.Associations) == 0 {
 			continue
 		}
@@ -446,8 +471,8 @@ func (s *stateCoordinator) reconcileLabelMappings(stackResources []StackResource
 		for _, l := range labels {
 			// we want to keep associations that are from previous application and are not changing
 			delete(mStackAss, StackResourceAssociation{
-				Kind:    KindLabel,
-				PkgName: l.parserLabel.PkgName(),
+				Kind:     KindLabel,
+				MetaName: l.parserLabel.MetaName(),
 			})
 		}
 
@@ -455,11 +480,11 @@ func (s *stateCoordinator) reconcileLabelMappings(stackResources []StackResource
 		// state fall into here and are marked for removal.
 		for assForRemoval := range mStackAss {
 			s.labelMappingsToRemove = append(s.labelMappingsToRemove, stateLabelMappingForRemoval{
-				LabelPkgName:    assForRemoval.PkgName,
-				LabelID:         mLabelPkgNameToID[assForRemoval.PkgName],
-				ResourceID:      r.ID,
-				ResourcePkgName: r.PkgName,
-				ResourceType:    r.Kind.ResourceType(),
+				LabelMetaName:    assForRemoval.MetaName,
+				LabelID:          mLabelMetaNameToID[assForRemoval.MetaName],
+				ResourceID:       r.ID,
+				ResourceMetaName: r.MetaName,
+				ResourceType:     r.Kind.ResourceType(),
 			})
 		}
 	}
@@ -470,7 +495,7 @@ func (s *stateCoordinator) reconcileNotificationDependencies(stackResources []St
 		if r.Kind.is(KindNotificationRule) {
 			for _, ass := range r.Associations {
 				if ass.Kind.is(KindNotificationEndpoint) {
-					s.mRules[r.PkgName].associatedEndpoint = s.mEndpoints[ass.PkgName]
+					s.mRules[r.MetaName].associatedEndpoint = s.mEndpoints[ass.MetaName]
 					break
 				}
 			}
@@ -478,69 +503,63 @@ func (s *stateCoordinator) reconcileNotificationDependencies(stackResources []St
 	}
 }
 
-func (s *stateCoordinator) get(k Kind, pkgName string) (interface{}, bool) {
+func (s *stateCoordinator) get(k Kind, metaName string) (interface{}, bool) {
 	switch k {
 	case KindBucket:
-		v, ok := s.mBuckets[pkgName]
+		v, ok := s.mBuckets[metaName]
 		return v, ok
 	case KindCheck, KindCheckDeadman, KindCheckThreshold:
-		v, ok := s.mChecks[pkgName]
+		v, ok := s.mChecks[metaName]
 		return v, ok
 	case KindDashboard:
-		v, ok := s.mDashboards[pkgName]
+		v, ok := s.mDashboards[metaName]
 		return v, ok
 	case KindLabel:
-		v, ok := s.mLabels[pkgName]
+		v, ok := s.mLabels[metaName]
 		return v, ok
 	case KindNotificationEndpoint,
 		KindNotificationEndpointHTTP,
 		KindNotificationEndpointPagerDuty,
 		KindNotificationEndpointSlack:
-		v, ok := s.mEndpoints[pkgName]
+		v, ok := s.mEndpoints[metaName]
 		return v, ok
 	case KindNotificationRule:
-		v, ok := s.mRules[pkgName]
+		v, ok := s.mRules[metaName]
 		return v, ok
 	case KindTask:
-		v, ok := s.mTasks[pkgName]
+		v, ok := s.mTasks[metaName]
 		return v, ok
 	case KindTelegraf:
-		v, ok := s.mTelegrafs[pkgName]
+		v, ok := s.mTelegrafs[metaName]
 		return v, ok
 	case KindVariable:
-		v, ok := s.mVariables[pkgName]
+		v, ok := s.mVariables[metaName]
 		return v, ok
 	default:
 		return nil, false
 	}
 }
 
-func (s *stateCoordinator) labelAssociations(k Kind, pkgName string) []*stateLabel {
-	type labelAssociater interface {
-		labels() []*label
-	}
-
-	v, _ := s.get(k, pkgName)
-	labeler, ok := v.(labelAssociater)
+func (s *stateCoordinator) labelAssociations(k Kind, metaName string) []*stateLabel {
+	v, _ := s.get(k, metaName)
+	labeler, ok := v.(interface {
+		labels() []*stateLabel
+	})
 	if !ok {
 		return nil
 	}
 
-	var out []*stateLabel
-	for _, l := range labeler.labels() {
-		out = append(out, s.mLabels[l.PkgName()])
-	}
-	return out
+	return labeler.labels()
 }
 
-func (s *stateCoordinator) Contains(k Kind, pkgName string) bool {
-	_, ok := s.get(k, pkgName)
+func (s *stateCoordinator) Contains(k Kind, metaName string) bool {
+	_, ok := s.get(k, metaName)
 	return ok
 }
 
 // setObjectID sets the id for the resource graphed from the object the key identifies.
-func (s *stateCoordinator) setObjectID(k Kind, pkgName string, id influxdb.ID) {
-	idSetFn, ok := s.getObjectIDSetter(k, pkgName)
+func (s *stateCoordinator) setObjectID(k Kind, metaName string, id influxdb.ID) {
+	idSetFn, ok := s.getObjectIDSetter(k, metaName)
 	if !ok {
 		return
 	}
@@ -548,35 +567,35 @@ func (s *stateCoordinator) setObjectID(k Kind, pkgName string, id influxdb.ID) {
 }
 
 // addObjectForRemoval sets the id for the resource graphed from the object the key identifies.
-// The pkgName and kind are used as the unique identifier, when calling this it will
+// The metaName and kind are used as the unique identifier, when calling this it will
 // overwrite any existing value if one exists. If desired, check for the value by using
 // the Contains method.
-func (s *stateCoordinator) addObjectForRemoval(k Kind, pkgName string, id influxdb.ID) {
+func (s *stateCoordinator) addObjectForRemoval(k Kind, metaName string, id influxdb.ID) {
 	newIdentity := identity{
-		name: &references{val: pkgName},
+		name: &references{val: metaName},
 	}
 
 	switch k {
 	case KindBucket:
-		s.mBuckets[pkgName] = &stateBucket{
+		s.mBuckets[metaName] = &stateBucket{
 			id:          id,
 			parserBkt:   &bucket{identity: newIdentity},
 			stateStatus: StateStatusRemove,
 		}
 	case KindCheck, KindCheckDeadman, KindCheckThreshold:
-		s.mChecks[pkgName] = &stateCheck{
+		s.mChecks[metaName] = &stateCheck{
 			id:          id,
 			parserCheck: &check{identity: newIdentity},
 			stateStatus: StateStatusRemove,
 		}
 	case KindDashboard:
-		s.mDashboards[pkgName] = &stateDashboard{
+		s.mDashboards[metaName] = &stateDashboard{
 			id:          id,
 			parserDash:  &dashboard{identity: newIdentity},
 			stateStatus: StateStatusRemove,
 		}
 	case KindLabel:
-		s.mLabels[pkgName] = &stateLabel{
+		s.mLabels[metaName] = &stateLabel{
 			id:          id,
 			parserLabel: &label{identity: newIdentity},
 			stateStatus: StateStatusRemove,
@@ -585,31 +604,31 @@ func (s *stateCoordinator) addObjectForRemoval(k Kind, pkgName string, id influx
 		KindNotificationEndpointHTTP,
 		KindNotificationEndpointPagerDuty,
 		KindNotificationEndpointSlack:
-		s.mEndpoints[pkgName] = &stateEndpoint{
+		s.mEndpoints[metaName] = &stateEndpoint{
 			id:             id,
 			parserEndpoint: &notificationEndpoint{identity: newIdentity},
 			stateStatus:    StateStatusRemove,
 		}
 	case KindNotificationRule:
-		s.mRules[pkgName] = &stateRule{
+		s.mRules[metaName] = &stateRule{
 			id:          id,
 			parserRule:  &notificationRule{identity: newIdentity},
 			stateStatus: StateStatusRemove,
 		}
 	case KindTask:
-		s.mTasks[pkgName] = &stateTask{
+		s.mTasks[metaName] = &stateTask{
 			id:          id,
 			parserTask:  &task{identity: newIdentity},
 			stateStatus: StateStatusRemove,
 		}
 	case KindTelegraf:
-		s.mTelegrafs[pkgName] = &stateTelegraf{
+		s.mTelegrafs[metaName] = &stateTelegraf{
 			id:             id,
 			parserTelegraf: &telegraf{identity: newIdentity},
 			stateStatus:    StateStatusRemove,
 		}
 	case KindVariable:
-		s.mVariables[pkgName] = &stateVariable{
+		s.mVariables[metaName] = &stateVariable{
 			id:          id,
 			parserVar:   &variable{identity: newIdentity},
 			stateStatus: StateStatusRemove,
@@ -617,28 +636,28 @@ func (s *stateCoordinator) addObjectForRemoval(k Kind, pkgName string, id influx
 	}
 }
 
-func (s *stateCoordinator) getObjectIDSetter(k Kind, pkgName string) (func(influxdb.ID), bool) {
+func (s *stateCoordinator) getObjectIDSetter(k Kind, metaName string) (func(influxdb.ID), bool) {
 	switch k {
 	case KindBucket:
-		r, ok := s.mBuckets[pkgName]
+		r, ok := s.mBuckets[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
 		}, ok
 	case KindCheck, KindCheckDeadman, KindCheckThreshold:
-		r, ok := s.mChecks[pkgName]
+		r, ok := s.mChecks[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
 		}, ok
 	case KindDashboard:
-		r, ok := s.mDashboards[pkgName]
+		r, ok := s.mDashboards[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
 		}, ok
 	case KindLabel:
-		r, ok := s.mLabels[pkgName]
+		r, ok := s.mLabels[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
@@ -647,31 +666,31 @@ func (s *stateCoordinator) getObjectIDSetter(k Kind, pkgName string) (func(influ
 		KindNotificationEndpointHTTP,
 		KindNotificationEndpointPagerDuty,
 		KindNotificationEndpointSlack:
-		r, ok := s.mEndpoints[pkgName]
+		r, ok := s.mEndpoints[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
 		}, ok
 	case KindNotificationRule:
-		r, ok := s.mRules[pkgName]
+		r, ok := s.mRules[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
 		}, ok
 	case KindTask:
-		r, ok := s.mTasks[pkgName]
+		r, ok := s.mTasks[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
 		}, ok
 	case KindTelegraf:
-		r, ok := s.mTelegrafs[pkgName]
+		r, ok := s.mTelegrafs[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
 		}, ok
 	case KindVariable:
-		r, ok := s.mVariables[pkgName]
+		r, ok := s.mVariables[metaName]
 		return func(id influxdb.ID) {
 			r.id = id
 			r.stateStatus = StateStatusExists
@@ -684,7 +703,7 @@ func (s *stateCoordinator) getObjectIDSetter(k Kind, pkgName string) (func(influ
 type stateIdentity struct {
 	id           influxdb.ID
 	name         string
-	pkgName      string
+	metaName     string
 	resourceType influxdb.ResourceType
 	stateStatus  StateStatus
 }
@@ -694,8 +713,9 @@ func (s stateIdentity) exists() bool {
 }
 
 type stateBucket struct {
-	id, orgID   influxdb.ID
-	stateStatus StateStatus
+	id, orgID         influxdb.ID
+	stateStatus       StateStatus
+	labelAssociations []*stateLabel
 
 	parserBkt *bucket
 	existing  *influxdb.Bucket
@@ -704,10 +724,10 @@ type stateBucket struct {
 func (b *stateBucket) diffBucket() DiffBucket {
 	diff := DiffBucket{
 		DiffIdentifier: DiffIdentifier{
+			Kind:        KindBucket,
 			ID:          SafeID(b.ID()),
-			Remove:      IsRemoval(b.stateStatus),
 			StateStatus: b.stateStatus,
-			PkgName:     b.parserBkt.PkgName(),
+			MetaName:    b.parserBkt.MetaName(),
 		},
 		New: DiffBucketValues{
 			Name:           b.parserBkt.Name(),
@@ -727,10 +747,19 @@ func (b *stateBucket) diffBucket() DiffBucket {
 	return diff
 }
 
+func stateToSummaryLabels(labels []*stateLabel) []SummaryLabel {
+	out := make([]SummaryLabel, 0, len(labels))
+	for _, l := range labels {
+		out = append(out, l.summarize())
+	}
+	return out
+}
+
 func (b *stateBucket) summarize() SummaryBucket {
 	sum := b.parserBkt.summarize()
 	sum.ID = SafeID(b.ID())
 	sum.OrgID = SafeID(b.orgID)
+	sum.LabelAssociations = stateToSummaryLabels(b.labelAssociations)
 	return sum
 }
 
@@ -745,15 +774,15 @@ func (b *stateBucket) resourceType() influxdb.ResourceType {
 	return KindBucket.ResourceType()
 }
 
-func (b *stateBucket) labels() []*label {
-	return b.parserBkt.labels
+func (b *stateBucket) labels() []*stateLabel {
+	return b.labelAssociations
 }
 
 func (b *stateBucket) stateIdentity() stateIdentity {
 	return stateIdentity{
 		id:           b.ID(),
 		name:         b.parserBkt.Name(),
-		pkgName:      b.parserBkt.PkgName(),
+		metaName:     b.parserBkt.MetaName(),
 		resourceType: b.resourceType(),
 		stateStatus:  b.stateStatus,
 	}
@@ -768,8 +797,9 @@ func (b *stateBucket) shouldApply() bool {
 }
 
 type stateCheck struct {
-	id, orgID   influxdb.ID
-	stateStatus StateStatus
+	id, orgID         influxdb.ID
+	stateStatus       StateStatus
+	labelAssociations []*stateLabel
 
 	parserCheck *check
 	existing    influxdb.Check
@@ -782,8 +812,8 @@ func (c *stateCheck) ID() influxdb.ID {
 	return c.id
 }
 
-func (c *stateCheck) labels() []*label {
-	return c.parserCheck.labels
+func (c *stateCheck) labels() []*stateLabel {
+	return c.labelAssociations
 }
 
 func (c *stateCheck) resourceType() influxdb.ResourceType {
@@ -794,7 +824,7 @@ func (c *stateCheck) stateIdentity() stateIdentity {
 	return stateIdentity{
 		id:           c.ID(),
 		name:         c.parserCheck.Name(),
-		pkgName:      c.parserCheck.PkgName(),
+		metaName:     c.parserCheck.MetaName(),
 		resourceType: c.resourceType(),
 		stateStatus:  c.stateStatus,
 	}
@@ -804,12 +834,13 @@ func (c *stateCheck) diffCheck() DiffCheck {
 	diff := DiffCheck{
 		DiffIdentifier: DiffIdentifier{
 			ID:          SafeID(c.ID()),
-			Remove:      IsRemoval(c.stateStatus),
 			StateStatus: c.stateStatus,
-			PkgName:     c.parserCheck.PkgName(),
+			MetaName:    c.parserCheck.MetaName(),
 		},
 	}
-	if newCheck := c.summarize(); newCheck.Check != nil {
+	newCheck := c.summarize()
+	diff.Kind = newCheck.Kind
+	if newCheck.Check != nil {
 		diff.New.Check = newCheck.Check
 	}
 	if c.existing != nil {
@@ -827,12 +858,14 @@ func (c *stateCheck) summarize() SummaryCheck {
 	}
 	sum.Check.SetID(c.id)
 	sum.Check.SetOrgID(c.orgID)
+	sum.LabelAssociations = stateToSummaryLabels(c.labelAssociations)
 	return sum
 }
 
 type stateDashboard struct {
-	id, orgID   influxdb.ID
-	stateStatus StateStatus
+	id, orgID         influxdb.ID
+	stateStatus       StateStatus
+	labelAssociations []*stateLabel
 
 	parserDash *dashboard
 	existing   *influxdb.Dashboard
@@ -845,8 +878,8 @@ func (d *stateDashboard) ID() influxdb.ID {
 	return d.id
 }
 
-func (d *stateDashboard) labels() []*label {
-	return d.parserDash.labels
+func (d *stateDashboard) labels() []*stateLabel {
+	return d.labelAssociations
 }
 
 func (d *stateDashboard) resourceType() influxdb.ResourceType {
@@ -857,7 +890,7 @@ func (d *stateDashboard) stateIdentity() stateIdentity {
 	return stateIdentity{
 		id:           d.ID(),
 		name:         d.parserDash.Name(),
-		pkgName:      d.parserDash.PkgName(),
+		metaName:     d.parserDash.MetaName(),
 		resourceType: d.resourceType(),
 		stateStatus:  d.stateStatus,
 	}
@@ -866,10 +899,10 @@ func (d *stateDashboard) stateIdentity() stateIdentity {
 func (d *stateDashboard) diffDashboard() DiffDashboard {
 	diff := DiffDashboard{
 		DiffIdentifier: DiffIdentifier{
+			Kind:        KindDashboard,
 			ID:          SafeID(d.ID()),
-			Remove:      IsRemoval(d.stateStatus),
 			StateStatus: d.stateStatus,
-			PkgName:     d.parserDash.PkgName(),
+			MetaName:    d.parserDash.MetaName(),
 		},
 		New: DiffDashboardValues{
 			Name:   d.parserDash.Name(),
@@ -920,6 +953,7 @@ func (d *stateDashboard) summarize() SummaryDashboard {
 	sum := d.parserDash.summarize()
 	sum.ID = SafeID(d.ID())
 	sum.OrgID = SafeID(d.orgID)
+	sum.LabelAssociations = stateToSummaryLabels(d.labelAssociations)
 	return sum
 }
 
@@ -934,11 +968,10 @@ type stateLabel struct {
 func (l *stateLabel) diffLabel() DiffLabel {
 	diff := DiffLabel{
 		DiffIdentifier: DiffIdentifier{
-			ID: SafeID(l.ID()),
-			// TODO: axe Remove field when StateStatus is adopted
-			Remove:      IsRemoval(l.stateStatus),
+			Kind:        KindLabel,
+			ID:          SafeID(l.ID()),
 			StateStatus: l.stateStatus,
-			PkgName:     l.parserLabel.PkgName(),
+			MetaName:    l.parserLabel.MetaName(),
 		},
 		New: DiffLabelValues{
 			Name:        l.parserLabel.Name(),
@@ -968,6 +1001,14 @@ func (l *stateLabel) ID() influxdb.ID {
 		return l.existing.ID
 	}
 	return l.id
+}
+
+func (l *stateLabel) Name() string {
+	return l.parserLabel.Name()
+}
+
+func (l *stateLabel) MetaName() string {
+	return l.parserLabel.MetaName()
 }
 
 func (l *stateLabel) shouldApply() bool {
@@ -1007,28 +1048,28 @@ type stateLabelMapping struct {
 func (lm stateLabelMapping) diffLabelMapping() DiffLabelMapping {
 	ident := lm.resource.stateIdentity()
 	return DiffLabelMapping{
-		StateStatus:  lm.status,
-		ResType:      ident.resourceType,
-		ResID:        SafeID(ident.id),
-		ResPkgName:   ident.pkgName,
-		ResName:      ident.name,
-		LabelID:      SafeID(lm.label.ID()),
-		LabelPkgName: lm.label.parserLabel.PkgName(),
-		LabelName:    lm.label.parserLabel.Name(),
+		StateStatus:   lm.status,
+		ResType:       ident.resourceType,
+		ResID:         SafeID(ident.id),
+		ResMetaName:   ident.metaName,
+		ResName:       ident.name,
+		LabelID:       SafeID(lm.label.ID()),
+		LabelMetaName: lm.label.parserLabel.MetaName(),
+		LabelName:     lm.label.parserLabel.Name(),
 	}
 }
 
 func (lm stateLabelMapping) summarize() SummaryLabelMapping {
 	ident := lm.resource.stateIdentity()
 	return SummaryLabelMapping{
-		Status:          lm.status,
-		ResourceID:      SafeID(ident.id),
-		ResourcePkgName: ident.pkgName,
-		ResourceName:    ident.name,
-		ResourceType:    ident.resourceType,
-		LabelPkgName:    lm.label.parserLabel.PkgName(),
-		LabelName:       lm.label.parserLabel.Name(),
-		LabelID:         SafeID(lm.label.ID()),
+		Status:           lm.status,
+		ResourceID:       SafeID(ident.id),
+		ResourceMetaName: ident.metaName,
+		ResourceName:     ident.name,
+		ResourceType:     ident.resourceType,
+		LabelMetaName:    lm.label.parserLabel.MetaName(),
+		LabelName:        lm.label.parserLabel.Name(),
+		LabelID:          SafeID(lm.label.ID()),
 	}
 }
 
@@ -1042,27 +1083,28 @@ func stateLabelMappingToInfluxLabelMapping(mapping stateLabelMapping) influxdb.L
 }
 
 type stateLabelMappingForRemoval struct {
-	LabelID         influxdb.ID
-	LabelPkgName    string
-	ResourceID      influxdb.ID
-	ResourcePkgName string
-	ResourceType    influxdb.ResourceType
+	LabelID          influxdb.ID
+	LabelMetaName    string
+	ResourceID       influxdb.ID
+	ResourceMetaName string
+	ResourceType     influxdb.ResourceType
 }
 
 func (m *stateLabelMappingForRemoval) diffLabelMapping() DiffLabelMapping {
 	return DiffLabelMapping{
-		StateStatus:  StateStatusRemove,
-		ResType:      m.ResourceType,
-		ResID:        SafeID(m.ResourceID),
-		ResPkgName:   m.ResourcePkgName,
-		LabelID:      SafeID(m.LabelID),
-		LabelPkgName: m.LabelPkgName,
+		StateStatus:   StateStatusRemove,
+		ResType:       m.ResourceType,
+		ResID:         SafeID(m.ResourceID),
+		ResMetaName:   m.ResourceMetaName,
+		LabelID:       SafeID(m.LabelID),
+		LabelMetaName: m.LabelMetaName,
 	}
 }
 
 type stateEndpoint struct {
-	id, orgID   influxdb.ID
-	stateStatus StateStatus
+	id, orgID         influxdb.ID
+	stateStatus       StateStatus
+	labelAssociations []*stateLabel
 
 	parserEndpoint *notificationEndpoint
 	existing       influxdb.NotificationEndpoint
@@ -1079,12 +1121,13 @@ func (e *stateEndpoint) diffEndpoint() DiffNotificationEndpoint {
 	diff := DiffNotificationEndpoint{
 		DiffIdentifier: DiffIdentifier{
 			ID:          SafeID(e.ID()),
-			Remove:      IsRemoval(e.stateStatus),
 			StateStatus: e.stateStatus,
-			PkgName:     e.parserEndpoint.PkgName(),
+			MetaName:    e.parserEndpoint.MetaName(),
 		},
 	}
-	if sum := e.summarize(); sum.NotificationEndpoint != nil {
+	sum := e.summarize()
+	diff.Kind = sum.Kind
+	if sum.NotificationEndpoint != nil {
 		diff.New.NotificationEndpoint = sum.NotificationEndpoint
 	}
 	if e.existing != nil {
@@ -1095,8 +1138,8 @@ func (e *stateEndpoint) diffEndpoint() DiffNotificationEndpoint {
 	return diff
 }
 
-func (e *stateEndpoint) labels() []*label {
-	return e.parserEndpoint.labels
+func (e *stateEndpoint) labels() []*stateLabel {
+	return e.labelAssociations
 }
 
 func (e *stateEndpoint) resourceType() influxdb.ResourceType {
@@ -1107,7 +1150,7 @@ func (e *stateEndpoint) stateIdentity() stateIdentity {
 	return stateIdentity{
 		id:           e.ID(),
 		name:         e.parserEndpoint.Name(),
-		pkgName:      e.parserEndpoint.PkgName(),
+		metaName:     e.parserEndpoint.MetaName(),
 		resourceType: e.resourceType(),
 		stateStatus:  e.stateStatus,
 	}
@@ -1124,12 +1167,14 @@ func (e *stateEndpoint) summarize() SummaryNotificationEndpoint {
 	if e.orgID != 0 {
 		sum.NotificationEndpoint.SetOrgID(e.orgID)
 	}
+	sum.LabelAssociations = stateToSummaryLabels(e.labelAssociations)
 	return sum
 }
 
 type stateRule struct {
-	id, orgID   influxdb.ID
-	stateStatus StateStatus
+	id, orgID         influxdb.ID
+	stateStatus       StateStatus
+	labelAssociations []*stateLabel
 
 	associatedEndpoint *stateEndpoint
 
@@ -1149,22 +1194,23 @@ func (r *stateRule) endpointAssociation() StackResourceAssociation {
 		return StackResourceAssociation{}
 	}
 	return StackResourceAssociation{
-		Kind:    KindNotificationEndpoint,
-		PkgName: r.endpointPkgName(),
+		Kind:     KindNotificationEndpoint,
+		MetaName: r.endpointTemplateName(),
 	}
 }
 
 func (r *stateRule) diffRule() DiffNotificationRule {
 	sum := DiffNotificationRule{
 		DiffIdentifier: DiffIdentifier{
-			ID:      SafeID(r.ID()),
-			Remove:  IsRemoval(r.stateStatus),
-			PkgName: r.parserRule.PkgName(),
+			Kind:        KindNotificationRule,
+			ID:          SafeID(r.ID()),
+			StateStatus: r.stateStatus,
+			MetaName:    r.parserRule.MetaName(),
 		},
 		New: DiffNotificationRuleValues{
 			Name:            r.parserRule.Name(),
 			Description:     r.parserRule.description,
-			EndpointName:    r.endpointPkgName(),
+			EndpointName:    r.endpointTemplateName(),
 			EndpointID:      SafeID(r.endpointID()),
 			EndpointType:    r.endpointType(),
 			Every:           r.parserRule.every.String(),
@@ -1231,9 +1277,9 @@ func (r *stateRule) endpointID() influxdb.ID {
 	return 0
 }
 
-func (r *stateRule) endpointPkgName() string {
+func (r *stateRule) endpointTemplateName() string {
 	if r.associatedEndpoint != nil && r.associatedEndpoint.parserEndpoint != nil {
-		return r.associatedEndpoint.parserEndpoint.PkgName()
+		return r.associatedEndpoint.parserEndpoint.MetaName()
 	}
 	return ""
 }
@@ -1245,8 +1291,8 @@ func (r *stateRule) endpointType() string {
 	return ""
 }
 
-func (r *stateRule) labels() []*label {
-	return r.parserRule.labels
+func (r *stateRule) labels() []*stateLabel {
+	return r.labelAssociations
 }
 
 func (r *stateRule) resourceType() influxdb.ResourceType {
@@ -1257,7 +1303,7 @@ func (r *stateRule) stateIdentity() stateIdentity {
 	return stateIdentity{
 		id:           r.ID(),
 		name:         r.parserRule.Name(),
-		pkgName:      r.parserRule.PkgName(),
+		metaName:     r.parserRule.MetaName(),
 		resourceType: r.resourceType(),
 		stateStatus:  r.stateStatus,
 	}
@@ -1267,8 +1313,9 @@ func (r *stateRule) summarize() SummaryNotificationRule {
 	sum := r.parserRule.summarize()
 	sum.ID = SafeID(r.id)
 	sum.EndpointID = SafeID(r.associatedEndpoint.ID())
-	sum.EndpointPkgName = r.associatedEndpoint.parserEndpoint.PkgName()
+	sum.EndpointMetaName = r.associatedEndpoint.parserEndpoint.MetaName()
 	sum.EndpointType = r.associatedEndpoint.parserEndpoint.kind.String()
+	sum.LabelAssociations = stateToSummaryLabels(r.labelAssociations)
 	return sum
 }
 
@@ -1293,8 +1340,9 @@ func (r *stateRule) toInfluxRule() influxdb.NotificationRule {
 }
 
 type stateTask struct {
-	id, orgID   influxdb.ID
-	stateStatus StateStatus
+	id, orgID         influxdb.ID
+	stateStatus       StateStatus
+	labelAssociations []*stateLabel
 
 	parserTask *task
 	existing   *influxdb.Task
@@ -1310,9 +1358,10 @@ func (t *stateTask) ID() influxdb.ID {
 func (t *stateTask) diffTask() DiffTask {
 	diff := DiffTask{
 		DiffIdentifier: DiffIdentifier{
-			ID:      SafeID(t.ID()),
-			Remove:  IsRemoval(t.stateStatus),
-			PkgName: t.parserTask.PkgName(),
+			Kind:        KindTask,
+			ID:          SafeID(t.ID()),
+			StateStatus: t.stateStatus,
+			MetaName:    t.parserTask.MetaName(),
 		},
 		New: DiffTaskValues{
 			Name:        t.parserTask.Name(),
@@ -1342,8 +1391,8 @@ func (t *stateTask) diffTask() DiffTask {
 	return diff
 }
 
-func (t *stateTask) labels() []*label {
-	return t.parserTask.labels
+func (t *stateTask) labels() []*stateLabel {
+	return t.labelAssociations
 }
 
 func (t *stateTask) resourceType() influxdb.ResourceType {
@@ -1354,7 +1403,7 @@ func (t *stateTask) stateIdentity() stateIdentity {
 	return stateIdentity{
 		id:           t.ID(),
 		name:         t.parserTask.Name(),
-		pkgName:      t.parserTask.PkgName(),
+		metaName:     t.parserTask.MetaName(),
 		resourceType: t.resourceType(),
 		stateStatus:  t.stateStatus,
 	}
@@ -1363,12 +1412,14 @@ func (t *stateTask) stateIdentity() stateIdentity {
 func (t *stateTask) summarize() SummaryTask {
 	sum := t.parserTask.summarize()
 	sum.ID = SafeID(t.id)
+	sum.LabelAssociations = stateToSummaryLabels(t.labelAssociations)
 	return sum
 }
 
 type stateTelegraf struct {
-	id, orgID   influxdb.ID
-	stateStatus StateStatus
+	id, orgID         influxdb.ID
+	stateStatus       StateStatus
+	labelAssociations []*stateLabel
 
 	parserTelegraf *telegraf
 	existing       *influxdb.TelegrafConfig
@@ -1384,17 +1435,18 @@ func (t *stateTelegraf) ID() influxdb.ID {
 func (t *stateTelegraf) diffTelegraf() DiffTelegraf {
 	return DiffTelegraf{
 		DiffIdentifier: DiffIdentifier{
-			ID:      SafeID(t.ID()),
-			Remove:  IsRemoval(t.stateStatus),
-			PkgName: t.parserTelegraf.PkgName(),
+			Kind:        KindTelegraf,
+			ID:          SafeID(t.ID()),
+			StateStatus: t.stateStatus,
+			MetaName:    t.parserTelegraf.MetaName(),
 		},
 		New: t.parserTelegraf.config,
 		Old: t.existing,
 	}
 }
 
-func (t *stateTelegraf) labels() []*label {
-	return t.parserTelegraf.labels
+func (t *stateTelegraf) labels() []*stateLabel {
+	return t.labelAssociations
 }
 
 func (t *stateTelegraf) resourceType() influxdb.ResourceType {
@@ -1405,7 +1457,7 @@ func (t *stateTelegraf) stateIdentity() stateIdentity {
 	return stateIdentity{
 		id:           t.ID(),
 		name:         t.parserTelegraf.Name(),
-		pkgName:      t.parserTelegraf.PkgName(),
+		metaName:     t.parserTelegraf.MetaName(),
 		resourceType: t.resourceType(),
 		stateStatus:  t.stateStatus,
 	}
@@ -1415,12 +1467,14 @@ func (t *stateTelegraf) summarize() SummaryTelegraf {
 	sum := t.parserTelegraf.summarize()
 	sum.TelegrafConfig.ID = t.id
 	sum.TelegrafConfig.OrgID = t.orgID
+	sum.LabelAssociations = stateToSummaryLabels(t.labelAssociations)
 	return sum
 }
 
 type stateVariable struct {
-	id, orgID   influxdb.ID
-	stateStatus StateStatus
+	id, orgID         influxdb.ID
+	stateStatus       StateStatus
+	labelAssociations []*stateLabel
 
 	parserVar *variable
 	existing  *influxdb.Variable
@@ -1436,10 +1490,10 @@ func (v *stateVariable) ID() influxdb.ID {
 func (v *stateVariable) diffVariable() DiffVariable {
 	diff := DiffVariable{
 		DiffIdentifier: DiffIdentifier{
+			Kind:        KindVariable,
 			ID:          SafeID(v.ID()),
-			Remove:      IsRemoval(v.stateStatus),
 			StateStatus: v.stateStatus,
-			PkgName:     v.parserVar.PkgName(),
+			MetaName:    v.parserVar.MetaName(),
 		},
 		New: DiffVariableValues{
 			Name:        v.parserVar.Name(),
@@ -1458,8 +1512,8 @@ func (v *stateVariable) diffVariable() DiffVariable {
 	return diff
 }
 
-func (v *stateVariable) labels() []*label {
-	return v.parserVar.labels
+func (v *stateVariable) labels() []*stateLabel {
+	return v.labelAssociations
 }
 
 func (v *stateVariable) resourceType() influxdb.ResourceType {
@@ -1470,6 +1524,7 @@ func (v *stateVariable) shouldApply() bool {
 	return IsRemoval(v.stateStatus) ||
 		v.existing == nil ||
 		v.existing.Description != v.parserVar.Description ||
+		!reflect.DeepEqual(v.existing.Selected, v.parserVar.Selected()) ||
 		v.existing.Arguments == nil ||
 		!reflect.DeepEqual(v.existing.Arguments, v.parserVar.influxVarArgs())
 }
@@ -1478,7 +1533,7 @@ func (v *stateVariable) stateIdentity() stateIdentity {
 	return stateIdentity{
 		id:           v.ID(),
 		name:         v.parserVar.Name(),
-		pkgName:      v.parserVar.PkgName(),
+		metaName:     v.parserVar.MetaName(),
 		resourceType: v.resourceType(),
 		stateStatus:  v.stateStatus,
 	}
@@ -1488,6 +1543,7 @@ func (v *stateVariable) summarize() SummaryVariable {
 	sum := v.parserVar.summarize()
 	sum.ID = SafeID(v.ID())
 	sum.OrgID = SafeID(v.orgID)
+	sum.LabelAssociations = stateToSummaryLabels(v.labelAssociations)
 	return sum
 }
 

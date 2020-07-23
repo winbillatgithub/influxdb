@@ -88,14 +88,11 @@ const ClientArduinoOverlay: FunctionComponent<Props> = props => {
   )
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   return {
     org: getOrg(state).id,
   }
 }
 
 export {ClientArduinoOverlay}
-export default connect<StateProps, {}, Props>(
-  mstp,
-  null
-)(ClientArduinoOverlay)
+export default connect<StateProps, {}, Props>(mstp, null)(ClientArduinoOverlay)

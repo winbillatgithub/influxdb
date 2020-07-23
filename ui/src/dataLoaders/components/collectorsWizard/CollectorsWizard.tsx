@@ -1,8 +1,8 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import Loadable from 'react-loadable'
-import {connect} from 'react-redux'
-import {withRouter, WithRouterProps} from 'react-router'
+import {connect, ConnectedProps} from 'react-redux'
+import {withRouter, RouteComponentProps} from 'react-router-dom'
 
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
@@ -18,7 +18,9 @@ const TelegrafEditor = Loadable({
 })
 const CollectorsStepSwitcher = Loadable({
   loader: () =>
-    import('src/dataLoaders/components/collectorsWizard/CollectorsStepSwitcher'),
+    import(
+      'src/dataLoaders/components/collectorsWizard/CollectorsStepSwitcher'
+    ),
   loading() {
     return spinner
   },
@@ -43,9 +45,7 @@ import {
 import {reset} from 'src/dataLoaders/actions/telegrafEditor'
 
 // Types
-import {Links} from 'src/types/links'
-import {Substep, TelegrafPlugin} from 'src/types/dataLoaders'
-import {AppState, Bucket, Organization, ResourceType} from 'src/types'
+import {AppState, Bucket, ResourceType} from 'src/types'
 
 // Selectors
 import {getAll} from 'src/resources/selectors'
@@ -62,36 +62,11 @@ export interface CollectorsStepProps {
   onExit: () => void
 }
 
-interface DispatchProps {
-  notify: typeof notifyAction
-  onSetBucketInfo: typeof setBucketInfo
-  onIncrementCurrentStepIndex: typeof incrementCurrentStepIndex
-  onDecrementCurrentStepIndex: typeof decrementCurrentStepIndex
-  onSetCurrentStepIndex: typeof setCurrentStepIndex
-  onClearDataLoaders: typeof clearDataLoaders
-  onClearSteps: typeof clearSteps
-  onClearTelegrafEditor: typeof reset
-  onSetActiveTelegrafPlugin: typeof setActiveTelegrafPlugin
-  onSetPluginConfiguration: typeof setPluginConfiguration
-}
-
-interface StateProps {
-  links: Links
-  buckets: Bucket[]
-  telegrafPlugins: TelegrafPlugin[]
-  currentStepIndex: number
-  substep: Substep
-  username: string
-  bucket: string
-  text: string
-  org: Organization
-}
-
-type Props = StateProps & DispatchProps
-type AllProps = Props & WithRouterProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = ReduxProps & RouteComponentProps<{orgID: string}>
 
 @ErrorHandling
-class CollectorsWizard extends PureComponent<AllProps> {
+class CollectorsWizard extends PureComponent<Props> {
   public componentDidMount() {
     const {bucket, buckets} = this.props
     if (!bucket && buckets && buckets.length) {
@@ -131,7 +106,7 @@ class CollectorsWizard extends PureComponent<AllProps> {
   }
 
   private handleDismiss = () => {
-    const {router, org} = this.props
+    const {history, org} = this.props
 
     if (isFlagEnabled('telegrafEditor')) {
       const {onClearTelegrafEditor} = this.props
@@ -141,7 +116,7 @@ class CollectorsWizard extends PureComponent<AllProps> {
       onClearDataLoaders()
       onClearSteps()
     }
-    router.push(`/orgs/${org.id}/load-data/telegrafs`)
+    history.push(`/orgs/${org.id}/load-data/telegrafs`)
   }
 
   private get stepProps(): CollectorsStepProps {
@@ -162,7 +137,7 @@ class CollectorsWizard extends PureComponent<AllProps> {
   }
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const {
     links,
     dataLoading: {
@@ -194,7 +169,7 @@ const mstp = (state: AppState): StateProps => {
   }
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
   notify: notifyAction,
   onSetBucketInfo: setBucketInfo,
   onIncrementCurrentStepIndex: incrementCurrentStepIndex,
@@ -207,7 +182,6 @@ const mdtp: DispatchProps = {
   onSetPluginConfiguration: setPluginConfiguration,
 }
 
-export default connect<StateProps, DispatchProps, {}>(
-  mstp,
-  mdtp
-)(withRouter<Props>(CollectorsWizard))
+const connector = connect(mstp, mdtp)
+
+export default connector(withRouter(CollectorsWizard))

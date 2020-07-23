@@ -1,28 +1,26 @@
-import React, {FC, useMemo} from 'react'
+import React, {FC, useMemo, useContext} from 'react'
+import {PipeContext} from 'src/notebooks/context/pipe'
 
 interface Props {
-  uri: string
   visible: boolean
 }
 
-const Embedded: FC<Props> = ({uri, visible}) => {
-  const parts = uri.split(':')
-
-  if (!visible) {
-    return null
-  }
+const Embedded: FC<Props> = ({visible}) => {
+  const {data} = useContext(PipeContext)
+  const parts = data.uri.split(':')
 
   return useMemo(
-    () => (
-      <iframe
-        src={`https://open.spotify.com/embed/${parts[1]}/${parts[2]}`}
-        width="600"
-        height="80"
-        frameBorder="0"
-        allow="encrypted-media"
-      />
-    ),
-    [uri]
+    () =>
+      visible && (
+        <iframe
+          src={`https://open.spotify.com/embed/${parts[1]}/${parts[2]}`}
+          width="600"
+          height="80"
+          frameBorder="0"
+          allow="encrypted-media"
+        />
+      ),
+    [visible, parts[1], parts[2]]
   )
 }
 

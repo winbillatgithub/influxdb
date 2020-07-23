@@ -76,14 +76,11 @@ const ClientScalaOverlay: FunctionComponent<Props> = props => {
   )
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   return {
     org: getOrg(state).id,
   }
 }
 
 export {ClientScalaOverlay}
-export default connect<StateProps, {}, Props>(
-  mstp,
-  null
-)(ClientScalaOverlay)
+export default connect<StateProps, {}, Props>(mstp, null)(ClientScalaOverlay)

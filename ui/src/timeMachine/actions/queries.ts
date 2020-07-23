@@ -32,10 +32,7 @@ import {
   isDemoDataAvailabilityError,
   demoDataError,
 } from 'src/cloud/utils/demoDataErrors'
-import {
-  reportSimpleQueryPerformanceEvent,
-  reportQueryPerformanceEvent,
-} from 'src/cloud/utils/reporting'
+import {event} from 'src/cloud/utils/reporting'
 
 // Types
 import {CancelBox} from 'src/types/promises'
@@ -46,12 +43,13 @@ import {
   Node,
   ResourceType,
   Bucket,
+  QueryEditMode,
+  BuilderTagsType,
 } from 'src/types'
 
 // Selectors
 import {getOrg} from 'src/organizations/selectors'
 import {getAll} from 'src/resources/selectors/index'
-import {fireQueryEvent} from 'src/shared/utils/analytics'
 
 export type Action = SaveDraftQueriesAction | SetQueryResults
 
@@ -66,7 +64,7 @@ interface SetQueryResults {
   }
 }
 
-const setQueryResults = (
+export const setQueryResults = (
   status: RemoteDataState,
   files?: string[],
   fetchDuration?: number,
@@ -101,6 +99,58 @@ export const getOrgIDFromBuckets = (
   return get(bucketMatch, 'orgID', null)
 }
 
+//We only need a minimum of one bucket, function, and tag,
+export const getQueryFromFlux = (text: string) => {
+  const ast = parse(text)
+
+  const aggregateWindowQuery: string[] = findNodes(
+    ast,
+    isFromFunction
+  ).map(node =>
+    get(node, 'arguments.0.properties.0.value.values.0.magnitude', '')
+  )
+
+  const bucketsInQuery: string[] = findNodes(ast, isFromBucket).map(node =>
+    get(node, 'arguments.0.properties.0.value.value', '')
+  )
+
+  const functionsInQuery: string[] = findNodes(ast, isFromFunction).map(node =>
+    get(node, 'arguments.0.properties.1.value.name', '')
+  )
+
+  const tagsKeysInQuery: string[] = findNodes(ast, isFromTag).map(node =>
+    get(node, 'arguments.0.properties.0.value.body.left.property.value', '')
+  )
+
+  const tagsValuesInQuery: string[] = findNodes(ast, isFromTag).map(node =>
+    get(node, 'arguments.0.properties.0.value.body.right.value', '')
+  )
+
+  const functionName = functionsInQuery.join()
+  const aggregateWindowName = aggregateWindowQuery.join()
+  const firstTagKey = tagsKeysInQuery.pop()
+  const firstValueKey = tagsValuesInQuery.pop()
+
+  // we need [bucket], functions=[{1}], tags = [{aggregateFunctionType: "filter",key: "_measurement",values:["cpu", "disk"]}]
+  return {
+    builderConfig: {
+      buckets: bucketsInQuery,
+      functions: [{name: functionName}],
+      tags: [
+        {
+          aggregateFunctionType: 'filter',
+          key: firstTagKey,
+          values: [firstValueKey],
+        } as BuilderTagsType,
+      ],
+      aggregateWindow: {period: aggregateWindowName},
+    },
+    editMode: 'builder' as QueryEditMode,
+    name: '',
+    text: text,
+  }
+}
+
 const isFromBucket = (node: Node) => {
   return (
     get(node, 'type') === 'CallExpression' &&
@@ -110,11 +160,27 @@ const isFromBucket = (node: Node) => {
   )
 }
 
+const isFromFunction = (node: Node) => {
+  return (
+    get(node, 'callee.type') === 'Identifier' &&
+    get(node, 'callee.name') === 'aggregateWindow' &&
+    get(node, 'arguments.0.properties.1.key.name') === 'fn'
+  )
+}
+
+const isFromTag = (node: Node) => {
+  return (
+    get(node, 'callee.type') === 'Identifier' &&
+    get(node, 'callee.name') === 'filter' &&
+    get(node, 'arguments.0.properties.0.value.type') === 'FunctionExpression'
+  )
+}
+
 export const executeQueries = (abortController?: AbortController) => async (
   dispatch,
   getState: GetState
 ) => {
-  reportSimpleQueryPerformanceEvent('executeQueries function start')
+  const executeQueriesStartTime = Date.now()
 
   const state = getState()
 
@@ -124,9 +190,6 @@ export const executeQueries = (abortController?: AbortController) => async (
   const queries = activeTimeMachine.view.properties.queries.filter(
     ({text}) => !!text.trim()
   )
-  const {
-    alertBuilder: {id: checkID},
-  } = state
 
   if (!queries.length) {
     dispatch(setQueryResults(RemoteDataState.Done, [], null))
@@ -147,30 +210,36 @@ export const executeQueries = (abortController?: AbortController) => async (
     // https://github.com/influxdata/idpe/issues/6240
 
     const startTime = window.performance.now()
+    const startDate = Date.now()
 
     pendingResults.forEach(({cancel}) => cancel())
-    reportSimpleQueryPerformanceEvent('executeQueries queries start')
 
     pendingResults = queries.map(({text}) => {
-      reportQueryPerformanceEvent({
-        timestamp: Date.now() * 1000000,
-        fields: {},
-        tags: {event: 'executeQueries queries', query: text},
-      })
+      event('executeQueries query', {}, {query: text})
       const orgID = getOrgIDFromBuckets(text, allBuckets) || getOrg(state).id
 
-      fireQueryEvent(getOrg(state).id, orgID)
+      if (getOrg(state).id === orgID) {
+        event('orgData_queried')
+      } else {
+        event('demoData_queried')
+      }
 
       const extern = buildVarsOption(variableAssignments)
 
+      event('runQuery', {context: 'timeMachine'})
       return runQuery(orgID, text, extern, abortController)
     })
     const results = await Promise.all(pendingResults.map(r => r.promise))
-    reportSimpleQueryPerformanceEvent('executeQueries queries end')
 
     const duration = window.performance.now() - startTime
 
+    event('executeQueries querying', {time: startDate}, {duration})
+
     let statuses = [[]] as StatusRow[][]
+    const {
+      alertBuilder: {id: checkID},
+    } = state
+
     if (checkID) {
       const extern = buildVarsOption(variableAssignments)
       pendingCheckStatuses = runStatusesQuery(getOrg(state).id, checkID, extern)
@@ -210,7 +279,15 @@ export const executeQueries = (abortController?: AbortController) => async (
     dispatch(
       setQueryResults(RemoteDataState.Done, files, duration, null, statuses)
     )
-    reportSimpleQueryPerformanceEvent('executeQueries function start')
+
+    event(
+      'executeQueries function',
+      {
+        time: executeQueriesStartTime,
+      },
+      {duration: Date.now() - executeQueriesStartTime}
+    )
+
     return results
   } catch (error) {
     if (error.name === 'CancellationError' || error.name === 'AbortError') {

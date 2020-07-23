@@ -76,14 +76,11 @@ const ClientGoOverlay: FunctionComponent<Props> = props => {
   )
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   return {
     org: getOrg(state).id,
   }
 }
 
 export {ClientGoOverlay}
-export default connect<StateProps, {}, Props>(
-  mstp,
-  null
-)(ClientGoOverlay)
+export default connect<StateProps, {}, Props>(mstp, null)(ClientGoOverlay)

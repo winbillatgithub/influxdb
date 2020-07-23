@@ -12,6 +12,9 @@ import {
   PopoverPosition,
 } from '@influxdata/clockface'
 
+// Utils
+import {event} from 'src/cloud/utils/reporting'
+
 interface Props {
   disabled: boolean
   children: (onHide: () => void) => JSX.Element
@@ -23,10 +26,12 @@ const ExportVisualizationButton: FC<Props> = ({disabled, children}) => {
   const status = disabled ? ComponentStatus.Disabled : ComponentStatus.Default
 
   const handleShow = (): void => {
+    event('Export Notebook Button Clicked')
     setIsExporting(true)
   }
 
   const handleHide = (): void => {
+    event('Export Notebook Canceled')
     setIsExporting(false)
   }
 
@@ -40,6 +45,7 @@ const ExportVisualizationButton: FC<Props> = ({disabled, children}) => {
         titleText="Save to Dashboard"
         status={status}
         style={buttonStyle}
+        className="flows-export-visualization-button"
       />
       <Popover
         triggerRef={triggerRef}

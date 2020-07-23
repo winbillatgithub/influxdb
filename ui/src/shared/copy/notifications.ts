@@ -962,3 +962,17 @@ export const invalidJSON = (message: string): Notification => {
       : 'We couldn’t parse the JSON you entered because it isn’t valid. Please check the formatting and try again.',
   }
 }
+
+export const communityTemplateInstallSucceeded = (
+  templateName: string
+): Notification => ({
+  ...defaultSuccessNotification,
+  message: `We've successfully installed: ${templateName}`,
+})
+
+export const communityTemplateDeleteSucceeded = (
+  templateName: string
+): Notification => ({
+  ...defaultSuccessNotification,
+  message: `We've successfully deleted: ${templateName}`,
+})

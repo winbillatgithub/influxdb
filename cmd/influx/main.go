@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -14,17 +15,15 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/v2"
-	"github.com/influxdata/influxdb/v2/bolt"
 	"github.com/influxdata/influxdb/v2/cmd/influx/config"
 	"github.com/influxdata/influxdb/v2/cmd/influx/internal"
 	"github.com/influxdata/influxdb/v2/http"
 	"github.com/influxdata/influxdb/v2/internal/fs"
 	"github.com/influxdata/influxdb/v2/kit/cli"
-	"github.com/influxdata/influxdb/v2/kv"
 	"github.com/influxdata/influxdb/v2/pkg/httpc"
+	"github.com/influxdata/influxdb/v2/task/options"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.uber.org/zap"
 )
 
 const maxTCPConnections = 10
@@ -32,10 +31,14 @@ const maxTCPConnections = 10
 var (
 	version = "dev"
 	commit  = "none"
-	date    = time.Now().UTC().Format(time.RFC3339)
+	date    = ""
 )
 
 func main() {
+	if len(date) == 0 {
+		date = time.Now().UTC().Format(time.RFC3339)
+	}
+
 	influxCmd := influxCmd()
 	if err := influxCmd.Execute(); err != nil {
 		seeHelp(influxCmd, nil)
@@ -87,6 +90,9 @@ type genericCLIOpts struct {
 	w    io.Writer
 	errW io.Writer
 
+	json        bool
+	hideHeaders bool
+
 	runEWrapFn cobraRunEMiddleware
 }
 
@@ -120,7 +126,13 @@ func (o genericCLIOpts) writeJSON(v interface{}) error {
 }
 
 func (o genericCLIOpts) newTabWriter() *internal.TabWriter {
-	return internal.NewTabWriter(o.w)
+	w := internal.NewTabWriter(o.w)
+	w.HideHeaders(o.hideHeaders)
+	return w
+}
+
+func (o *genericCLIOpts) registerPrintOptions(cmd *cobra.Command) {
+	registerPrintOptions(cmd, &o.hideHeaders, &o.json)
 }
 
 func in(r io.Reader) genericCLIOptFn {
@@ -135,23 +147,55 @@ func out(w io.Writer) genericCLIOptFn {
 	}
 }
 
-func err(w io.Writer) genericCLIOptFn {
-	return func(o *genericCLIOpts) {
-		o.errW = w
-	}
-}
-
-func runEMiddlware(mw cobraRunEMiddleware) genericCLIOptFn {
-	return func(o *genericCLIOpts) {
-		o.runEWrapFn = mw
-	}
-}
-
 type globalFlags struct {
 	config.Config
-	local        bool
 	skipVerify   bool
 	traceDebugID string
+}
+
+func (g *globalFlags) registerFlags(cmd *cobra.Command, skipFlags ...string) {
+	if g == nil {
+		panic("global flags are not set: <nil>")
+	}
+
+	skips := make(map[string]bool)
+	for _, flag := range skipFlags {
+		skips[flag] = true
+	}
+
+	fOpts := flagOpts{
+		{
+			DestP: &g.Token,
+			Flag:  "token",
+			Short: 't',
+			Desc:  "Authentication token",
+		},
+		{
+			DestP: &g.Host,
+			Flag:  "host",
+			Desc:  "HTTP address of InfluxDB",
+		},
+		{
+			DestP:  &g.traceDebugID,
+			Flag:   "trace-debug-id",
+			Hidden: true,
+		},
+	}
+
+	var filtered flagOpts
+	for _, o := range fOpts {
+		if skips[o.Flag] {
+			continue
+		}
+		filtered = append(filtered, o)
+	}
+
+	filtered.mustRegister(cmd)
+
+	if skips["skip-verify"] {
+		return
+	}
+	cmd.Flags().BoolVar(&g.skipVerify, "skip-verify", false, "Skip TLS certificate chain and host name verification.")
 }
 
 var flags globalFlags
@@ -193,29 +237,6 @@ func (b *cmdInfluxBuilder) cmd(childCmdFns ...func(f *globalFlags, opt genericCL
 		cmd.AddCommand(childCmd(&flags, b.genericCLIOpts))
 	}
 
-	fOpts := flagOpts{
-		{
-			DestP:      &flags.Token,
-			Flag:       "token",
-			Short:      't',
-			Desc:       "API token to be used throughout client calls",
-			Persistent: true,
-		},
-		{
-			DestP:      &flags.Host,
-			Flag:       "host",
-			Desc:       "HTTP address of Influx",
-			Persistent: true,
-		},
-		{
-			DestP:      &flags.traceDebugID,
-			Flag:       "trace-debug-id",
-			Hidden:     true,
-			Persistent: true,
-		},
-	}
-	fOpts.mustRegister(cmd)
-
 	// migration credential token
 	migrateOldCredential()
 
@@ -235,9 +256,6 @@ func (b *cmdInfluxBuilder) cmd(childCmdFns ...func(f *globalFlags, opt genericCL
 		cfg.Host = flags.Host
 	}
 	flags.Config = cfg
-
-	cmd.PersistentFlags().BoolVar(&flags.local, "local", false, "Run commands locally against the filesystem")
-	cmd.PersistentFlags().BoolVar(&flags.skipVerify, "skip-verify", false, "SkipVerify controls whether a client verifies the server's certificate chain and host name.")
 
 	// Update help description for all commands in command tree
 	walk(cmd, func(c *cobra.Command) {
@@ -280,6 +298,7 @@ func influxCmd(opts ...genericCLIOptFn) *cobra.Command {
 		cmdSetup,
 		cmdStack,
 		cmdTask,
+		cmdTelegraf,
 		cmdTemplate,
 		cmdApply,
 		cmdTranspile,
@@ -321,7 +340,7 @@ func defaultConfigPath() (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	return filepath.Join(dir, http.DefaultConfigsFile), dir, nil
+	return filepath.Join(dir, fs.DefaultConfigsFile), dir, nil
 }
 
 func getConfigFromDefaultPath() config.Config {
@@ -346,18 +365,18 @@ func migrateOldCredential() {
 		return // no need for migration
 	}
 
-	tokB, err := ioutil.ReadFile(filepath.Join(dir, http.DefaultTokenFile))
+	tokB, err := ioutil.ReadFile(filepath.Join(dir, fs.DefaultTokenFile))
 	if err != nil {
 		return // no need for migration
 	}
 
-	err = writeConfigToPath(strings.TrimSpace(string(tokB)), "", filepath.Join(dir, http.DefaultConfigsFile), dir)
+	err = writeConfigToPath(strings.TrimSpace(string(tokB)), "", filepath.Join(dir, fs.DefaultConfigsFile), dir)
 	if err != nil {
 		return
 	}
 
 	// ignore the remove err
-	_ = os.Remove(filepath.Join(dir, http.DefaultTokenFile))
+	_ = os.Remove(filepath.Join(dir, fs.DefaultTokenFile))
 }
 
 func writeConfigToPath(tok, org, path, dir string) error {
@@ -411,20 +430,6 @@ func walk(c *cobra.Command, f func(*cobra.Command)) {
 	for _, c := range c.Commands() {
 		walk(c, f)
 	}
-}
-
-func newLocalKVService() (*kv.Service, error) {
-	boltFile, err := fs.BoltFile()
-	if err != nil {
-		return nil, err
-	}
-
-	store := bolt.NewKVStore(zap.NewNop(), boltFile)
-	if err := store.Open(context.Background()); err != nil {
-		return nil, err
-	}
-
-	return kv.NewService(zap.NewNop(), store), nil
 }
 
 type organization struct {
@@ -494,6 +499,10 @@ func (o *organization) validOrgFlags(f *globalFlags) error {
 type flagOpts []cli.Opt
 
 func (f flagOpts) mustRegister(cmd *cobra.Command) {
+	if len(f) == 0 {
+		return
+	}
+
 	for i := range f {
 		envVar := f[i].Flag
 		if e := f[i].EnvVar; e != "" {
@@ -538,6 +547,16 @@ func setViperOptions() {
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 }
 
+func enforceFlagValidation(cmd *cobra.Command) {
+	cmd.FParseErrWhitelist = cobra.FParseErrWhitelist{
+		// disable unknown flags when short flag can conflict with a long flag.
+		// An example here is the --filter flag provided as -filter=foo will overwrite
+		// the -f flag to -f=ilter=foo, which generates a bad filename.
+		// remedies issue: https://github.com/influxdata/influxdb/issues/18850
+		UnknownFlags: false,
+	}
+}
+
 func writeJSON(w io.Writer, v interface{}) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "\t")
@@ -545,10 +564,6 @@ func writeJSON(w io.Writer, v interface{}) error {
 }
 
 func newBucketService() (influxdb.BucketService, error) {
-	if flags.local {
-		return newLocalKVService()
-	}
-
 	client, err := newHTTPClient()
 	if err != nil {
 		return nil, err
@@ -557,4 +572,51 @@ func newBucketService() (influxdb.BucketService, error) {
 	return &http.BucketService{
 		Client: client,
 	}, nil
+}
+
+func rawDurationToTimeDuration(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
+	}
+
+	if dur, err := time.ParseDuration(raw); err == nil {
+		return dur, nil
+	}
+
+	retention, err := options.ParseSignedDuration(raw)
+	if err != nil {
+		return 0, err
+	}
+
+	const (
+		day  = 24 * time.Hour
+		week = 7 * day
+	)
+
+	var dur time.Duration
+	for _, d := range retention.Values {
+		if d.Magnitude < 0 {
+			return 0, errors.New("must be greater than 0")
+		}
+		mag := time.Duration(d.Magnitude)
+		switch d.Unit {
+		case "w":
+			dur += mag * week
+		case "d":
+			dur += mag * day
+		case "m":
+			dur += mag * time.Minute
+		case "s":
+			dur += mag * time.Second
+		case "ms":
+			dur += mag * time.Minute
+		case "us":
+			dur += mag * time.Microsecond
+		case "ns":
+			dur += mag * time.Nanosecond
+		default:
+			return 0, errors.New("duration must be week(w), day(d), hour(h), min(m), sec(s), millisec(ms), microsec(us), or nanosec(ns)")
+		}
+	}
+	return dur, nil
 }

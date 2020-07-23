@@ -1,12 +1,15 @@
 // Libraries
 import React, {Component} from 'react'
 import {connect} from 'react-redux'
+import {Switch, Route} from 'react-router-dom'
 
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import OrgTabbedPage from 'src/organizations/components/OrgTabbedPage'
 import OrgHeader from 'src/organizations/components/OrgHeader'
-import {Grid, Columns, Page} from '@influxdata/clockface'
+import {Grid, Page} from '@influxdata/clockface'
+import OrgProfileTab from 'src/organizations/components/OrgProfileTab'
+import RenameOrgOverlay from 'src/organizations/components/RenameOrgOverlay'
 
 // Utils
 import {pageTitleSuffixer} from 'src/shared/utils/pageTitles'
@@ -14,7 +17,6 @@ import {getOrg} from 'src/organizations/selectors'
 
 // Types
 import {AppState, Organization} from 'src/types'
-import OrgProfileTab from '../components/OrgProfileTab'
 
 interface StateProps {
   org: Organization
@@ -23,7 +25,7 @@ interface StateProps {
 @ErrorHandling
 class OrgProfilePage extends Component<StateProps> {
   public render() {
-    const {org, children} = this.props
+    const {org} = this.props
 
     return (
       <>
@@ -32,14 +34,17 @@ class OrgProfilePage extends Component<StateProps> {
           <OrgTabbedPage activeTab="about" orgID={org.id}>
             <Grid>
               <Grid.Row>
-                <Grid.Column widthXS={Columns.Twelve} widthSM={Columns.Six}>
-                  <OrgProfileTab />
-                </Grid.Column>
+                <OrgProfileTab />
               </Grid.Row>
             </Grid>
           </OrgTabbedPage>
         </Page>
-        {children}
+        <Switch>
+          <Route
+            path="/orgs/:orgID/about/rename"
+            component={RenameOrgOverlay}
+          />
+        </Switch>
       </>
     )
   }
@@ -47,7 +52,4 @@ class OrgProfilePage extends Component<StateProps> {
 
 const mstp = (state: AppState) => ({org: getOrg(state)})
 
-export default connect<StateProps, {}, {}>(
-  mstp,
-  null
-)(OrgProfilePage)
+export default connect<StateProps>(mstp)(OrgProfilePage)

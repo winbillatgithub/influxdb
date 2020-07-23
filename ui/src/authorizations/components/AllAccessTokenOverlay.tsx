@@ -1,5 +1,5 @@
 import React, {PureComponent, ChangeEvent} from 'react'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps} from 'react-redux'
 
 // Components
 import {
@@ -23,6 +23,7 @@ import {createAuthorization} from 'src/authorizations/actions/thunks'
 // Utils
 import {allAccessPermissions} from 'src/authorizations/utils/permissions'
 import {getOrg} from 'src/organizations/selectors'
+import {getMe} from 'src/me/selectors'
 
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
@@ -34,19 +35,12 @@ interface OwnProps {
   onClose: () => void
 }
 
-interface StateProps {
-  orgID: string
-}
-
-interface DispatchProps {
-  onCreateAuthorization: typeof createAuthorization
-}
-
 interface State {
   description: string
 }
 
-type Props = OwnProps & StateProps & DispatchProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = OwnProps & ReduxProps
 
 @ErrorHandling
 class AllAccessTokenOverlay extends PureComponent<Props, State> {
@@ -80,6 +74,7 @@ class AllAccessTokenOverlay extends PureComponent<Props, State> {
                   placeholder="Describe this new token"
                   value={description}
                   onChange={this.handleInputChange}
+                  testID="all-access-token-input"
                 />
               </Form.Element>
 
@@ -92,6 +87,7 @@ class AllAccessTokenOverlay extends PureComponent<Props, State> {
 
                 <Button
                   text="Save"
+                  testID="button--save"
                   icon={IconFont.Checkmark}
                   color={ComponentColor.Success}
                   type={ButtonType.Submit}
@@ -105,12 +101,12 @@ class AllAccessTokenOverlay extends PureComponent<Props, State> {
   }
 
   private handleSave = () => {
-    const {orgID, onCreateAuthorization} = this.props
+    const {orgID, meID, onCreateAuthorization} = this.props
 
     const token: Authorization = {
       orgID,
       description: this.state.description,
-      permissions: allAccessPermissions(orgID),
+      permissions: allAccessPermissions(orgID, meID),
     }
 
     onCreateAuthorization(token)
@@ -129,17 +125,17 @@ class AllAccessTokenOverlay extends PureComponent<Props, State> {
   }
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   return {
     orgID: getOrg(state).id,
+    meID: getMe(state).id,
   }
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
   onCreateAuthorization: createAuthorization,
 }
 
-export default connect<StateProps, DispatchProps, {}>(
-  mstp,
-  mdtp
-)(AllAccessTokenOverlay)
+const connector = connect(mstp, mdtp)
+
+export default connector(AllAccessTokenOverlay)

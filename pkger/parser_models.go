@@ -28,7 +28,7 @@ func (i *identity) Name() string {
 	return i.name.String()
 }
 
-func (i *identity) PkgName() string {
+func (i *identity) MetaName() string {
 	return i.name.String()
 }
 
@@ -50,6 +50,7 @@ func summarizeCommonReferences(ident identity, labels sortedLabels) []SummaryRef
 const (
 	fieldAPIVersion   = "apiVersion"
 	fieldAssociations = "associations"
+	fieldDefault      = "default"
 	fieldDescription  = "description"
 	fieldEvery        = "every"
 	fieldKey          = "key"
@@ -88,12 +89,15 @@ type bucket struct {
 
 func (b *bucket) summarize() SummaryBucket {
 	return SummaryBucket{
+		SummaryIdentifier: SummaryIdentifier{
+			Kind:          KindBucket,
+			MetaName:      b.MetaName(),
+			EnvReferences: summarizeCommonReferences(b.identity, b.labels),
+		},
 		Name:              b.Name(),
-		PkgName:           b.PkgName(),
 		Description:       b.Description,
 		RetentionPeriod:   b.RetentionRules.RP(),
 		LabelAssociations: toSummaryLabels(b.labels...),
-		EnvReferences:     summarizeCommonReferences(b.identity, b.labels),
 	}
 }
 
@@ -247,18 +251,22 @@ func (c *check) summarize() SummaryCheck {
 	}
 
 	sum := SummaryCheck{
-		PkgName:           c.PkgName(),
+		SummaryIdentifier: SummaryIdentifier{
+			MetaName:      c.MetaName(),
+			EnvReferences: summarizeCommonReferences(c.identity, c.labels),
+		},
 		Status:            c.Status(),
 		LabelAssociations: toSummaryLabels(c.labels...),
-		EnvReferences:     summarizeCommonReferences(c.identity, c.labels),
 	}
 	switch c.kind {
 	case checkKindThreshold:
+		sum.Kind = KindCheckThreshold
 		sum.Check = &icheck.Threshold{
 			Base:       base,
 			Thresholds: toInfluxThresholds(c.thresholds...),
 		}
 	case checkKindDeadman:
+		sum.Kind = KindCheckDeadman
 		sum.Check = &icheck.Deadman{
 			Base:       base,
 			Level:      notification.ParseCheckLevel(strings.ToUpper(c.level)),
@@ -462,11 +470,14 @@ func (d *dashboard) ResourceType() influxdb.ResourceType {
 
 func (d *dashboard) summarize() SummaryDashboard {
 	iDash := SummaryDashboard{
-		PkgName:           d.PkgName(),
+		SummaryIdentifier: SummaryIdentifier{
+			Kind:          KindDashboard,
+			MetaName:      d.MetaName(),
+			EnvReferences: summarizeCommonReferences(d.identity, d.labels),
+		},
 		Name:              d.Name(),
 		Description:       d.Description,
 		LabelAssociations: toSummaryLabels(d.labels...),
-		EnvReferences:     summarizeCommonReferences(d.identity, d.labels),
 	}
 	for _, c := range d.Charts {
 		iDash.Charts = append(iDash.Charts, SummaryChart{
@@ -494,31 +505,32 @@ func (d *dashboard) valid() []validationErr {
 }
 
 const (
-	fieldChartAxes          = "axes"
-	fieldChartBinCount      = "binCount"
-	fieldChartBinSize       = "binSize"
-	fieldChartColors        = "colors"
-	fieldChartDecimalPlaces = "decimalPlaces"
-	fieldChartDomain        = "domain"
-	fieldChartFillColumns   = "fillColumns"
-	fieldChartGeom          = "geom"
-	fieldChartHeight        = "height"
-	fieldChartLegend        = "legend"
-	fieldChartNote          = "note"
-	fieldChartNoteOnEmpty   = "noteOnEmpty"
-	fieldChartPosition      = "position"
-	fieldChartQueries       = "queries"
-	fieldChartShade         = "shade"
-	fieldChartFieldOptions  = "fieldOptions"
-	fieldChartTableOptions  = "tableOptions"
-	fieldChartTickPrefix    = "tickPrefix"
-	fieldChartTickSuffix    = "tickSuffix"
-	fieldChartTimeFormat    = "timeFormat"
-	fieldChartWidth         = "width"
-	fieldChartXCol          = "xCol"
-	fieldChartXPos          = "xPos"
-	fieldChartYCol          = "yCol"
-	fieldChartYPos          = "yPos"
+	fieldChartAxes           = "axes"
+	fieldChartBinCount       = "binCount"
+	fieldChartBinSize        = "binSize"
+	fieldChartColors         = "colors"
+	fieldChartDecimalPlaces  = "decimalPlaces"
+	fieldChartDomain         = "domain"
+	fieldChartFillColumns    = "fillColumns"
+	fieldChartGeom           = "geom"
+	fieldChartHeight         = "height"
+	fieldChartLegend         = "legend"
+	fieldChartNote           = "note"
+	fieldChartNoteOnEmpty    = "noteOnEmpty"
+	fieldChartPosition       = "position"
+	fieldChartQueries        = "queries"
+	fieldChartShade          = "shade"
+	fieldChartHoverDimension = "hoverDimension"
+	fieldChartFieldOptions   = "fieldOptions"
+	fieldChartTableOptions   = "tableOptions"
+	fieldChartTickPrefix     = "tickPrefix"
+	fieldChartTickSuffix     = "tickSuffix"
+	fieldChartTimeFormat     = "timeFormat"
+	fieldChartWidth          = "width"
+	fieldChartXCol           = "xCol"
+	fieldChartXPos           = "xPos"
+	fieldChartYCol           = "yCol"
+	fieldChartYPos           = "yPos"
 )
 
 type chart struct {
@@ -533,6 +545,7 @@ type chart struct {
 	DecimalPlaces   int
 	EnforceDecimals bool
 	Shade           bool
+	HoverDimension  string
 	Legend          legend
 	Colors          colors
 	Queries         queries
@@ -656,6 +669,7 @@ func (c chart) properties() influxdb.ViewProperties {
 			XColumn:           c.XCol,
 			YColumn:           c.YCol,
 			ShadeBelow:        c.Shade,
+			HoverDimension:    c.HoverDimension,
 			Legend:            c.Legend.influxLegend(),
 			Queries:           c.Queries.influxDashQueries(),
 			ViewColors:        c.Colors.influxViewColors(),
@@ -701,6 +715,7 @@ func (c chart) properties() influxdb.ViewProperties {
 			XColumn:           c.XCol,
 			YColumn:           c.YCol,
 			ShadeBelow:        c.Shade,
+			HoverDimension:    c.HoverDimension,
 			Legend:            c.Legend.influxLegend(),
 			Queries:           c.Queries.influxDashQueries(),
 			ViewColors:        c.Colors.influxViewColors(),
@@ -1066,9 +1081,9 @@ type assocMapVal struct {
 }
 
 func (l assocMapVal) PkgName() string {
-	t, ok := l.v.(interface{ PkgName() string })
+	t, ok := l.v.(interface{ MetaName() string })
 	if ok {
-		return t.PkgName()
+		return t.MetaName()
 	}
 	return ""
 }
@@ -1126,8 +1141,12 @@ type label struct {
 
 func (l *label) summarize() SummaryLabel {
 	return SummaryLabel{
-		PkgName: l.PkgName(),
-		Name:    l.Name(),
+		SummaryIdentifier: SummaryIdentifier{
+			Kind:          KindLabel,
+			MetaName:      l.MetaName(),
+			EnvReferences: l.identity.summarizeReferences(),
+		},
+		Name: l.Name(),
 		Properties: struct {
 			Color       string `json:"color"`
 			Description string `json:"description"`
@@ -1135,7 +1154,6 @@ func (l *label) summarize() SummaryLabel {
 			Color:       l.Color,
 			Description: l.Description,
 		},
-		EnvReferences: l.identity.summarizeReferences(),
 	}
 }
 
@@ -1148,13 +1166,13 @@ func (l *label) mappingSummary() []SummaryLabelMapping {
 				status = StateStatusExists
 			}
 			mappings = append(mappings, SummaryLabelMapping{
-				exists:          v.exists,
-				Status:          status,
-				ResourcePkgName: v.PkgName(),
-				ResourceName:    resource.name,
-				ResourceType:    resource.resType,
-				LabelPkgName:    l.PkgName(),
-				LabelName:       l.Name(),
+				exists:           v.exists,
+				Status:           status,
+				ResourceMetaName: v.PkgName(),
+				ResourceName:     resource.name,
+				ResourceType:     resource.resType,
+				LabelMetaName:    l.MetaName(),
+				LabelName:        l.Name(),
 			})
 		}
 	}
@@ -1202,7 +1220,7 @@ func (s sortedLabels) Len() int {
 }
 
 func (s sortedLabels) Less(i, j int) bool {
-	return s[i].PkgName() < s[j].PkgName()
+	return s[i].MetaName() < s[j].MetaName()
 }
 
 func (s sortedLabels) Swap(i, j int) {
@@ -1279,13 +1297,16 @@ func (n *notificationEndpoint) base() endpoint.Base {
 func (n *notificationEndpoint) summarize() SummaryNotificationEndpoint {
 	base := n.base()
 	sum := SummaryNotificationEndpoint{
-		PkgName:           n.PkgName(),
+		SummaryIdentifier: SummaryIdentifier{
+			MetaName:      n.MetaName(),
+			EnvReferences: summarizeCommonReferences(n.identity, n.labels),
+		},
 		LabelAssociations: toSummaryLabels(n.labels...),
-		EnvReferences:     summarizeCommonReferences(n.identity, n.labels),
 	}
 
 	switch n.kind {
 	case notificationKindHTTP:
+		sum.Kind = KindNotificationEndpointHTTP
 		e := &endpoint.HTTP{
 			Base:   base,
 			URL:    n.url,
@@ -1304,12 +1325,14 @@ func (n *notificationEndpoint) summarize() SummaryNotificationEndpoint {
 		}
 		sum.NotificationEndpoint = e
 	case notificationKindPagerDuty:
+		sum.Kind = KindNotificationEndpointPagerDuty
 		sum.NotificationEndpoint = &endpoint.PagerDuty{
 			Base:       base,
 			ClientURL:  n.url,
 			RoutingKey: n.routingKey.SecretField(),
 		}
 	case notificationKindSlack:
+		sum.Kind = KindNotificationEndpointSlack
 		sum.NotificationEndpoint = &endpoint.Slack{
 			Base:  base,
 			URL:   n.url,
@@ -1462,9 +1485,9 @@ func (r *notificationRule) Status() influxdb.Status {
 	return influxdb.Status(r.status)
 }
 
-func (r *notificationRule) endpointPkgName() string {
+func (r *notificationRule) endpointMetaName() string {
 	if r.associatedEndpoint != nil {
-		return r.associatedEndpoint.PkgName()
+		return r.associatedEndpoint.MetaName()
 	}
 	return ""
 }
@@ -1472,7 +1495,7 @@ func (r *notificationRule) endpointPkgName() string {
 func (r *notificationRule) summarize() SummaryNotificationRule {
 	var endpointPkgName, endpointType string
 	if r.associatedEndpoint != nil {
-		endpointPkgName = r.associatedEndpoint.PkgName()
+		endpointPkgName = r.associatedEndpoint.MetaName()
 		endpointType = r.associatedEndpoint.kind.String()
 	}
 
@@ -1482,14 +1505,17 @@ func (r *notificationRule) summarize() SummaryNotificationRule {
 	}
 
 	return SummaryNotificationRule{
-		PkgName:           r.PkgName(),
+		SummaryIdentifier: SummaryIdentifier{
+			Kind:          KindNotificationRule,
+			MetaName:      r.MetaName(),
+			EnvReferences: envRefs,
+		},
 		Name:              r.Name(),
-		EndpointPkgName:   endpointPkgName,
+		EndpointMetaName:  endpointPkgName,
 		EndpointType:      endpointType,
 		Description:       r.description,
 		Every:             r.every.String(),
 		LabelAssociations: toSummaryLabels(r.labels...),
-		EnvReferences:     envRefs,
 		Offset:            r.offset.String(),
 		MessageTemplate:   r.msgTemplate,
 		Status:            r.Status(),
@@ -1716,7 +1742,11 @@ func (t *task) flux() string {
 
 func (t *task) summarize() SummaryTask {
 	return SummaryTask{
-		PkgName:     t.PkgName(),
+		SummaryIdentifier: SummaryIdentifier{
+			Kind:          KindTask,
+			MetaName:      t.MetaName(),
+			EnvReferences: summarizeCommonReferences(t.identity, t.labels),
+		},
 		Name:        t.Name(),
 		Cron:        t.cron,
 		Description: t.description,
@@ -1725,7 +1755,6 @@ func (t *task) summarize() SummaryTask {
 		Query:       t.query,
 		Status:      t.Status(),
 
-		EnvReferences:     summarizeCommonReferences(t.identity, t.labels),
 		LabelAssociations: toSummaryLabels(t.labels...),
 	}
 }
@@ -1851,10 +1880,13 @@ func (t *telegraf) summarize() SummaryTelegraf {
 	cfg := t.config
 	cfg.Name = t.Name()
 	return SummaryTelegraf{
-		PkgName:           t.PkgName(),
+		SummaryIdentifier: SummaryIdentifier{
+			Kind:          KindTelegraf,
+			MetaName:      t.MetaName(),
+			EnvReferences: summarizeCommonReferences(t.identity, t.labels),
+		},
 		TelegrafConfig:    cfg,
 		LabelAssociations: toSummaryLabels(t.labels...),
-		EnvReferences:     summarizeCommonReferences(t.identity, t.labels),
 	}
 }
 
@@ -1880,9 +1912,10 @@ func (t *telegraf) valid() []validationErr {
 }
 
 const (
-	fieldArgTypeConstant = "constant"
-	fieldArgTypeMap      = "map"
-	fieldArgTypeQuery    = "query"
+	fieldArgTypeConstant  = "constant"
+	fieldArgTypeMap       = "map"
+	fieldArgTypeQuery     = "query"
+	fieldVariableSelected = "selected"
 )
 
 type variable struct {
@@ -1894,6 +1927,7 @@ type variable struct {
 	Language    string
 	ConstValues []string
 	MapValues   map[string]string
+	selected    []*references
 
 	labels sortedLabels
 }
@@ -1906,14 +1940,38 @@ func (v *variable) ResourceType() influxdb.ResourceType {
 	return KindVariable.ResourceType()
 }
 
+func (v *variable) Selected() []string {
+	selected := make([]string, 0, len(v.selected))
+	for _, sel := range v.selected {
+		s := sel.String()
+		if s == "" {
+			continue
+		}
+		selected = append(selected, s)
+	}
+	return selected
+}
+
 func (v *variable) summarize() SummaryVariable {
+	envRefs := summarizeCommonReferences(v.identity, v.labels)
+	for i, sel := range v.selected {
+		if sel.hasEnvRef() {
+			field := fmt.Sprintf("spec.%s[%d]", fieldVariableSelected, i)
+			envRefs = append(envRefs, convertRefToRefSummary(field, sel))
+		}
+	}
+
 	return SummaryVariable{
-		PkgName:           v.PkgName(),
+		SummaryIdentifier: SummaryIdentifier{
+			Kind:          KindVariable,
+			MetaName:      v.MetaName(),
+			EnvReferences: envRefs,
+		},
 		Name:              v.Name(),
 		Description:       v.Description,
+		Selected:          v.Selected(),
 		Arguments:         v.influxVarArgs(),
 		LabelAssociations: toSummaryLabels(v.labels...),
-		EnvReferences:     summarizeCommonReferences(v.identity, v.labels),
 	}
 }
 
@@ -1992,9 +2050,10 @@ const (
 )
 
 type references struct {
-	val    interface{}
-	EnvRef string
-	Secret string
+	val        interface{}
+	defaultVal string
+	EnvRef     string
+	Secret     string
 }
 
 func (r *references) hasValue() bool {
@@ -2019,6 +2078,9 @@ func (r *references) String() string {
 }
 
 func (r *references) defaultEnvValue() string {
+	if r.defaultVal != "" {
+		return r.defaultVal
+	}
 	return "env-" + r.EnvRef
 }
 

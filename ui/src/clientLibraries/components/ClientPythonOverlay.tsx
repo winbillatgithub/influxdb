@@ -88,7 +88,7 @@ const ClientPythonOverlay: FunctionComponent<Props> = props => {
   )
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const {id} = getOrg(state)
 
   return {
@@ -97,7 +97,4 @@ const mstp = (state: AppState): StateProps => {
 }
 
 export {ClientPythonOverlay}
-export default connect<StateProps, {}, Props>(
-  mstp,
-  null
-)(ClientPythonOverlay)
+export default connect<StateProps, {}, Props>(mstp, null)(ClientPythonOverlay)

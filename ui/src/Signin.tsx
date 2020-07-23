@@ -1,13 +1,14 @@
 // Libraries
 import React, {ReactElement, PureComponent} from 'react'
-import {withRouter, WithRouterProps} from 'react-router'
-import {connect} from 'react-redux'
+import {Switch, Route, RouteComponentProps} from 'react-router-dom'
+import {connect, ConnectedProps} from 'react-redux'
 
 import {client} from 'src/utils/api'
 
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
+import GetMe from 'src/shared/containers/GetMe'
 
 // Utils
 import {
@@ -28,23 +29,21 @@ import {RemoteDataState} from 'src/types'
 
 interface State {
   loading: RemoteDataState
+  auth: boolean
 }
 
 interface OwnProps {
   children: ReactElement<any>
 }
 
-interface DispatchProps {
-  notify: typeof notifyAction
-}
-
-type Props = OwnProps & WithRouterProps & DispatchProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = OwnProps & RouteComponentProps & ReduxProps
 
 const FETCH_WAIT = 60000
 
 @ErrorHandling
 export class Signin extends PureComponent<Props, State> {
-  public state: State = {loading: RemoteDataState.NotStarted}
+  public state: State = {loading: RemoteDataState.NotStarted, auth: false}
 
   private hasMounted = false
   private intervalID: NodeJS.Timer
@@ -69,11 +68,15 @@ export class Signin extends PureComponent<Props, State> {
   }
 
   public render() {
-    const {loading} = this.state
+    const {loading, auth} = this.state
 
     return (
       <SpinnerContainer loading={loading} spinnerComponent={<TechnoSpinner />}>
-        {this.props.children && React.cloneElement(this.props.children)}
+        {auth && (
+          <Switch>
+            <Route component={GetMe} />
+          </Switch>
+        )}
       </SpinnerContainer>
     )
   }
@@ -81,11 +84,14 @@ export class Signin extends PureComponent<Props, State> {
   private checkForLogin = async () => {
     try {
       await client.users.me()
+
+      this.setState({auth: true})
       const redirectIsSet = !!getFromLocalStorage('redirectTo')
       if (redirectIsSet) {
         removeFromLocalStorage('redirectTo')
       }
     } catch (error) {
+      this.setState({auth: false})
       const {
         location: {pathname},
       } = this.props
@@ -94,9 +100,7 @@ export class Signin extends PureComponent<Props, State> {
 
       if (CLOUD) {
         const url = new URL(
-          `${window.location.origin}${CLOUD_SIGNIN_PATHNAME}?redirectTo=${
-            window.location.href
-          }`
+          `${window.location.origin}${CLOUD_SIGNIN_PATHNAME}?redirectTo=${window.location.href}`
         )
         setToLocalStorage('redirectTo', window.location.href)
         window.location.href = url.href
@@ -114,16 +118,15 @@ export class Signin extends PureComponent<Props, State> {
         this.props.notify(sessionTimedOut())
       }
 
-      this.props.router.replace(`/signin${returnTo}`)
+      this.props.history.replace(`/signin${returnTo}`)
     }
   }
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
   notify: notifyAction,
 }
 
-export default connect(
-  null,
-  mdtp
-)(withRouter(Signin))
+const connector = connect(null, mdtp)
+
+export default connector(Signin)

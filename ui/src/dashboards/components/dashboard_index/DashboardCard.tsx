@@ -1,7 +1,7 @@
 // Libraries
 import React, {PureComponent} from 'react'
-import {connect} from 'react-redux'
-import {withRouter, WithRouterProps} from 'react-router'
+import {connect, ConnectedProps} from 'react-redux'
+import {withRouter, RouteComponentProps} from 'react-router-dom'
 
 // Components
 import {IconFont, ComponentColor, ResourceCard} from '@influxdata/clockface'
@@ -36,16 +36,8 @@ interface OwnProps {
   onFilterChange: (searchTerm: string) => void
 }
 
-interface DispatchProps {
-  onDeleteDashboard: typeof deleteDashboard
-  onCloneDashboard: typeof cloneDashboard
-  onUpdateDashboard: typeof updateDashboard
-  onAddDashboardLabel: typeof addDashboardLabel
-  onRemoveDashboardLabel: typeof removeDashboardLabel
-  onResetViews: typeof resetViews
-}
-
-type Props = OwnProps & DispatchProps & WithRouterProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = OwnProps & ReduxProps & RouteComponentProps<{orgID: string}>
 
 class DashboardCard extends PureComponent<Props> {
   public render() {
@@ -107,7 +99,11 @@ class DashboardCard extends PureComponent<Props> {
     return (
       <Context>
         <Context.Menu icon={IconFont.CogThick}>
-          <Context.Item label="Export" action={this.handleExport} />
+          <Context.Item
+            label="Export"
+            action={this.handleExport}
+            testID="context-menu-item-export"
+          />
         </Context.Menu>
         <Context.Menu
           icon={IconFont.Duplicate}
@@ -142,15 +138,17 @@ class DashboardCard extends PureComponent<Props> {
   private handleClickDashboard = e => {
     const {
       onResetViews,
-      router,
+      history,
       id,
-      params: {orgID},
+      match: {
+        params: {orgID},
+      },
     } = this.props
 
     if (e.metaKey) {
       window.open(`/orgs/${orgID}/dashboards/${id}`, '_blank')
     } else {
-      router.push(`/orgs/${orgID}/dashboards/${id}`)
+      history.push(`/orgs/${orgID}/dashboards/${id}`)
     }
 
     onResetViews()
@@ -176,16 +174,18 @@ class DashboardCard extends PureComponent<Props> {
 
   private handleExport = () => {
     const {
-      router,
-      params: {orgID},
+      history,
+      match: {
+        params: {orgID},
+      },
       id,
     } = this.props
 
-    router.push(`/orgs/${orgID}/dashboards/${id}/export`)
+    history.push(`/orgs/${orgID}/dashboards-list/${id}/export`)
   }
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
   onAddDashboardLabel: addDashboardLabel,
   onRemoveDashboardLabel: removeDashboardLabel,
   onResetViews: resetViews,
@@ -194,7 +194,6 @@ const mdtp: DispatchProps = {
   onUpdateDashboard: updateDashboard,
 }
 
-export default connect<{}, DispatchProps, OwnProps>(
-  null,
-  mdtp
-)(withRouter(DashboardCard))
+const connector = connect(null, mdtp)
+
+export default connector(withRouter(DashboardCard))

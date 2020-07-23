@@ -10,14 +10,15 @@ import {getOrg} from 'src/organizations/selectors'
 import {NotebookContext} from 'src/notebooks/context/notebook'
 import {TimeContext} from 'src/notebooks/context/time'
 import {fromFlux as parse} from '@influxdata/giraffe'
-import {BothResults} from 'src/notebooks'
+import {event} from 'src/cloud/utils/reporting'
+import {FluxResult} from 'src/notebooks'
 
 export interface QueryContextType {
-  query: (text: string) => Promise<BothResults>
+  query: (text: string) => Promise<FluxResult>
 }
 
 export const DEFAULT_CONTEXT: QueryContextType = {
-  query: () => Promise.resolve({} as BothResults),
+  query: () => Promise.resolve({} as FluxResult),
 }
 
 export const QueryContext = React.createContext<QueryContextType>(
@@ -39,6 +40,7 @@ export const QueryProvider: FC<Props> = ({children, variables, org}) => {
     const windowVars = getWindowVars(text, vars)
     const extern = buildVarsOption([...vars, ...windowVars])
 
+    event('runQuery', {context: 'notebooks'})
     return runQuery(org.id, text, extern)
       .promise.then(raw => {
         if (raw.type !== 'SUCCESS') {
@@ -71,7 +73,7 @@ interface StateProps {
   org: Organization
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const variables = getVariables(state)
   const org = getOrg(state)
 

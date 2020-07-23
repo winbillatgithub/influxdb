@@ -16,11 +16,11 @@ import (
 	"github.com/influxdata/influxql"
 )
 
-// cancelCheckInterval represents the period at which TagKeys and TagValues
-// will check for a canceled context. Specifically after every 64 series
-// scanned, the query context will be checked for cancellation, and if canceled,
-// the calls will immediately return.
-const cancelCheckInterval = 64
+// cancelCheckInterval represents the period at which various schema calls
+// will check for a canceled context. It is important this
+// is not too frequent, or it could cause expensive context switches in
+// tight loops.
+const cancelCheckInterval = 5000
 
 // TagValues returns an iterator which enumerates the values for the specific
 // tagKey in the given bucket matching the predicate within the
@@ -53,6 +53,7 @@ func (e *Engine) tagValuesNoPredicate(ctx context.Context, orgID, bucketID influ
 		// append the measurement tag key to the prefix
 		mt := models.Tags{models.NewTag(models.MeasurementTagKeyBytes, measurement)}
 		tsmKeyPrefix = mt.AppendHashKey(tsmKeyPrefix)
+		tsmKeyPrefix = append(tsmKeyPrefix, ',')
 	}
 
 	// TODO(sgc): extend prefix when filtering by \x00 == <measurement>
@@ -181,6 +182,7 @@ func (e *Engine) tagValuesPredicate(ctx context.Context, orgID, bucketID influxd
 		// append the measurement tag key to the prefix
 		mt := models.Tags{models.NewTag(models.MeasurementTagKeyBytes, measurement)}
 		tsmKeyPrefix = mt.AppendHashKey(tsmKeyPrefix)
+		tsmKeyPrefix = append(tsmKeyPrefix, ',')
 	}
 
 	var canceled bool
@@ -349,6 +351,7 @@ func (e *Engine) tagKeysNoPredicate(ctx context.Context, orgID, bucketID influxd
 		// append the measurement tag key to the prefix
 		mt := models.Tags{models.NewTag(models.MeasurementTagKeyBytes, measurement)}
 		tsmKeyPrefix = mt.AppendHashKey(tsmKeyPrefix)
+		tsmKeyPrefix = append(tsmKeyPrefix, ',')
 	}
 
 	var keyset models.TagKeysSet
@@ -358,6 +361,9 @@ func (e *Engine) tagKeysNoPredicate(ctx context.Context, orgID, bucketID influxd
 	var stats cursors.CursorStats
 	var canceled bool
 
+	var files unrefs
+	defer func() { files.Unref() }()
+
 	e.FileStore.ForEachFile(func(f TSMFile) bool {
 		// Check the context before touching each tsm file
 		select {
@@ -366,6 +372,8 @@ func (e *Engine) tagKeysNoPredicate(ctx context.Context, orgID, bucketID influxd
 			return false
 		default:
 		}
+
+		var hasRef bool
 		if f.OverlapsTimeRange(start, end) && f.OverlapsKeyPrefixRange(tsmKeyPrefix, tsmKeyPrefix) {
 			// TODO(sgc): create f.TimeRangeIterator(minKey, maxKey, start, end)
 			iter := f.TimeRangeIterator(tsmKeyPrefix, start, end)
@@ -384,6 +392,12 @@ func (e *Engine) tagKeysNoPredicate(ctx context.Context, orgID, bucketID influxd
 
 				if iter.HasData() {
 					keyset.UnionKeys(tags)
+
+					// Add reference to ensure tags are valid for the outer function.
+					if !hasRef {
+						f.Ref()
+						files, hasRef = append(files, f), true
+					}
 				}
 			}
 			stats.Add(iter.Stats())
@@ -463,6 +477,7 @@ func (e *Engine) tagKeysPredicate(ctx context.Context, orgID, bucketID influxdb.
 		// append the measurement tag key to the prefix
 		mt := models.Tags{models.NewTag(models.MeasurementTagKeyBytes, measurement)}
 		tsmKeyPrefix = mt.AppendHashKey(tsmKeyPrefix)
+		tsmKeyPrefix = append(tsmKeyPrefix, ',')
 	}
 
 	var canceled bool
@@ -559,7 +574,10 @@ func statsFromIters(stats cursors.CursorStats, iters []*TimeRangeIterator) curso
 	return stats
 }
 
-var errUnexpectedTagComparisonOperator = errors.New("unexpected tag comparison operator")
+var (
+	errUnexpectedTagComparisonOperator = errors.New("unexpected tag comparison operator")
+	errNotImplemented                  = errors.New("not implemented")
+)
 
 func ValidateTagPredicate(expr influxql.Expr) (err error) {
 	influxql.WalkFunc(expr, func(node influxql.Node) {
@@ -570,7 +588,7 @@ func ValidateTagPredicate(expr influxql.Expr) (err error) {
 		switch n := node.(type) {
 		case *influxql.BinaryExpr:
 			switch n.Op {
-			case influxql.EQ, influxql.NEQ, influxql.EQREGEX, influxql.NEQREGEX, influxql.OR, influxql.AND:
+			case influxql.EQ, influxql.EQREGEX, influxql.NEQREGEX, influxql.NEQ, influxql.OR, influxql.AND:
 			default:
 				err = errUnexpectedTagComparisonOperator
 			}
@@ -578,6 +596,44 @@ func ValidateTagPredicate(expr influxql.Expr) (err error) {
 			switch r := n.LHS.(type) {
 			case *influxql.VarRef:
 			case *influxql.BinaryExpr:
+			case *influxql.ParenExpr:
+			default:
+				err = fmt.Errorf("binary expression: LHS must be tag key reference, got: %T", r)
+			}
+
+			switch r := n.RHS.(type) {
+			case *influxql.StringLiteral:
+			case *influxql.RegexLiteral:
+			case *influxql.BinaryExpr:
+			case *influxql.ParenExpr:
+			default:
+				err = fmt.Errorf("binary expression: RHS must be string or regex, got: %T", r)
+			}
+		}
+	})
+	return err
+}
+
+func ValidateMeasurementNamesTagPredicate(expr influxql.Expr) (err error) {
+	influxql.WalkFunc(expr, func(node influxql.Node) {
+		if err != nil {
+			return
+		}
+
+		switch n := node.(type) {
+		case *influxql.BinaryExpr:
+			switch n.Op {
+			case influxql.EQ, influxql.EQREGEX, influxql.OR, influxql.AND:
+			case influxql.NEQREGEX, influxql.NEQ:
+				err = errNotImplemented
+			default:
+				err = errUnexpectedTagComparisonOperator
+			}
+
+			switch r := n.LHS.(type) {
+			case *influxql.VarRef:
+			case *influxql.BinaryExpr:
+			case *influxql.ParenExpr:
 			default:
 				err = fmt.Errorf("binary expression: LHS must be tag key reference, got: %T", r)
 			}

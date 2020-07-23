@@ -3,6 +3,7 @@ package kv
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"time"
 
@@ -78,19 +79,6 @@ func kvToInfluxTask(k *kvTask) *influxdb.Task {
 		UpdatedAt:       k.UpdatedAt,
 		Metadata:        k.Metadata,
 	}
-}
-
-func (s *Service) initializeTasks(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket(taskBucket); err != nil {
-		return err
-	}
-	if _, err := tx.Bucket(taskRunBucket); err != nil {
-		return err
-	}
-	if _, err := tx.Bucket(taskIndexBucket); err != nil {
-		return err
-	}
-	return nil
 }
 
 // FindTaskByID returns a single task
@@ -674,7 +662,7 @@ func (s *Service) createTask(ctx context.Context, tx Tx, tc influxdb.TaskCreate)
 	// 	return nil, influxdb.ErrInvalidOwnerID
 	// }
 
-	opt, err := options.FromScript(s.FluxLanguageService, tc.Flux)
+	opts, err := ExtractTaskOptions(ctx, s.FluxLanguageService, tc.Flux)
 	if err != nil {
 		return nil, influxdb.ErrTaskOptionParse(err)
 	}
@@ -691,19 +679,19 @@ func (s *Service) createTask(ctx context.Context, tx Tx, tc influxdb.TaskCreate)
 		Organization:    org.Name,
 		OwnerID:         tc.OwnerID,
 		Metadata:        tc.Metadata,
-		Name:            opt.Name,
+		Name:            opts.Name,
 		Description:     tc.Description,
 		Status:          tc.Status,
 		Flux:            tc.Flux,
-		Every:           opt.Every.String(),
-		Cron:            opt.Cron,
+		Every:           opts.Every.String(),
+		Cron:            opts.Cron,
 		CreatedAt:       createdAt,
 		LatestCompleted: createdAt,
 		LatestScheduled: createdAt,
 	}
 
-	if opt.Offset != nil {
-		off, err := time.ParseDuration(opt.Offset.String())
+	if opts.Offset != nil {
+		off, err := time.ParseDuration(opts.Offset.String())
 		if err != nil {
 			return nil, influxdb.ErrTaskTimeParse(err)
 		}
@@ -830,17 +818,17 @@ func (s *Service) updateTask(ctx context.Context, tx Tx, id influxdb.ID, upd inf
 		}
 		task.Flux = *upd.Flux
 
-		options, err := options.FromScript(s.FluxLanguageService, *upd.Flux)
+		opts, err := ExtractTaskOptions(ctx, s.FluxLanguageService, *upd.Flux)
 		if err != nil {
 			return nil, influxdb.ErrTaskOptionParse(err)
 		}
-		task.Name = options.Name
-		task.Every = options.Every.String()
-		task.Cron = options.Cron
+		task.Name = opts.Name
+		task.Every = opts.Every.String()
+		task.Cron = opts.Cron
 
 		var off time.Duration
-		if options.Offset != nil {
-			off, err = time.ParseDuration(options.Offset.String())
+		if opts.Offset != nil {
+			off, err = time.ParseDuration(opts.Offset.String())
 			if err != nil {
 				return nil, influxdb.ErrTaskTimeParse(err)
 			}
@@ -1778,144 +1766,74 @@ func taskRunKey(taskID, runID influxdb.ID) ([]byte, error) {
 	return []byte(string(encodedID) + "/" + string(encodedRunID)), nil
 }
 
-func (s *Service) TaskOwnerIDUpMigration(ctx context.Context, store Store) error {
-	var ownerlessTasks []*influxdb.Task
-	// loop through the tasks and collect a set of tasks that are missing the owner id.
-	err := store.View(ctx, func(tx Tx) error {
-		taskBucket, err := tx.Bucket(taskBucket)
-		if err != nil {
-			return influxdb.ErrUnexpectedTaskBucketErr(err)
+var taskOptionsPattern = regexp.MustCompile(`option\s+task\s*=\s*{.*}`)
+
+// ExtractTaskOptions is a feature-flag driven switch between normal options
+// parsing and a more simplified variant.
+//
+// The simplified variant extracts the options assignment and passes only that
+// content through the parser. This allows us to allow scenarios like [1] to
+// pass through options validation. One clear drawback of this is that it
+// requires constant values for the parameter assignments. However, most people
+// are doing that anyway.
+//
+// [1]: https://github.com/influxdata/influxdb/issues/17666
+func ExtractTaskOptions(ctx context.Context, lang influxdb.FluxLanguageService, flux string) (options.Options, error) {
+	if !feature.SimpleTaskOptionsExtraction().Enabled(ctx) {
+		return options.FromScript(lang, flux)
+	}
+
+	matches := taskOptionsPattern.FindAllString(flux, -1)
+	if len(matches) == 0 {
+		return options.Options{}, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "no task options defined",
 		}
-
-		c, err := taskBucket.ForwardCursor([]byte{})
-		if err != nil {
-			return influxdb.ErrUnexpectedTaskBucketErr(err)
+	}
+	if len(matches) > 1 {
+		return options.Options{}, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "multiple task options defined",
 		}
+	}
+	return options.FromScript(lang, matches[0])
+}
 
-		for k, v := c.Next(); k != nil; k, v = c.Next() {
-			kvTask := &kvTask{}
-			if err := json.Unmarshal(v, kvTask); err != nil {
-				return influxdb.ErrInternalTaskServiceError(err)
-			}
-
-			t := kvToInfluxTask(kvTask)
-
-			if !t.OwnerID.Valid() {
-				ownerlessTasks = append(ownerlessTasks, t)
-			}
-		}
-		if err := c.Err(); err != nil {
-			return err
-		}
-
-		return c.Close()
-	})
+func (s *Service) maxPermissions(ctx context.Context, tx Tx, userID influxdb.ID) ([]influxdb.Permission, error) {
+	// TODO(desa): these values should be cached so it's not so expensive to lookup each time.
+	f := influxdb.UserResourceMappingFilter{UserID: userID}
+	mappings, err := s.findUserResourceMappings(ctx, tx, f)
 	if err != nil {
-		return err
-	}
-
-	// loop through tasks
-	for _, t := range ownerlessTasks {
-		// open transaction
-		err := store.Update(ctx, func(tx Tx) error {
-			taskKey, err := taskKey(t.ID)
-			if err != nil {
-				return err
-			}
-			b, err := tx.Bucket(taskBucket)
-			if err != nil {
-				return influxdb.ErrUnexpectedTaskBucketErr(err)
-			}
-
-			if !t.OwnerID.Valid() {
-				v, err := b.Get(taskKey)
-				if IsNotFound(err) {
-					return influxdb.ErrTaskNotFound
-				}
-				authType := struct {
-					AuthorizationID influxdb.ID `json:"authorizationID"`
-				}{}
-				if err := json.Unmarshal(v, &authType); err != nil {
-					return influxdb.ErrInternalTaskServiceError(err)
-				}
-
-				// try populating the owner from auth
-				encodedID, err := authType.AuthorizationID.Encode()
-				if err == nil {
-					authBucket, err := tx.Bucket([]byte("authorizationsv1"))
-					if err != nil {
-						return err
-					}
-
-					a, err := authBucket.Get(encodedID)
-					if err == nil {
-						auth := &influxdb.Authorization{}
-						if err := json.Unmarshal(a, auth); err != nil {
-							return err
-						}
-
-						t.OwnerID = auth.GetUserID()
-					}
-				}
-
-			}
-
-			// try populating owner from urm
-			if !t.OwnerID.Valid() {
-				b, err := tx.Bucket([]byte("userresourcemappingsv1"))
-				if err != nil {
-					return err
-				}
-
-				id, err := t.OrganizationID.Encode()
-				if err != nil {
-					return err
-				}
-
-				cur, err := b.ForwardCursor(id, WithCursorPrefix(id))
-				if err != nil {
-					return err
-				}
-
-				for k, v := cur.Next(); k != nil; k, v = cur.Next() {
-					m := &influxdb.UserResourceMapping{}
-					if err := json.Unmarshal(v, m); err != nil {
-						return err
-					}
-					if m.ResourceID == t.OrganizationID && m.ResourceType == influxdb.OrgsResourceType && m.UserType == influxdb.Owner {
-						t.OwnerID = m.UserID
-						break
-					}
-				}
-
-				if err := cur.Close(); err != nil {
-					return err
-				}
-			}
-
-			// if population fails return error
-			if !t.OwnerID.Valid() {
-				return &influxdb.Error{
-					Code: influxdb.EInternal,
-					Msg:  "could not populate owner ID for task",
-				}
-			}
-
-			// save task
-			taskBytes, err := json.Marshal(t)
-			if err != nil {
-				return influxdb.ErrInternalTaskServiceError(err)
-			}
-
-			err = b.Put(taskKey, taskBytes)
-			if err != nil {
-				return influxdb.ErrUnexpectedTaskBucketErr(err)
-			}
-			return nil
-		})
-		if err != nil {
-			return err
+		return nil, &influxdb.Error{
+			Err: err,
 		}
 	}
-	return nil
+
+	ps := make([]influxdb.Permission, 0, len(mappings))
+	for _, m := range mappings {
+		p, err := m.ToPermissions()
+		if err != nil {
+			return nil, &influxdb.Error{
+				Err: err,
+			}
+		}
+
+		ps = append(ps, p...)
+	}
+	ps = append(ps, influxdb.MePermissions(userID)...)
+
+	if !s.disableAuthorizationsForMaxPermissions(ctx) {
+		// TODO(desa): this is super expensive, we should keep a list of a users maximal privileges somewhere
+		// we did this so that the oper token would be used in a users permissions.
+		af := influxdb.AuthorizationFilter{UserID: &userID}
+		as, err := s.findAuthorizations(ctx, tx, af)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range as {
+			ps = append(ps, a.Permissions...)
+		}
+	}
+
+	return ps, nil
 }

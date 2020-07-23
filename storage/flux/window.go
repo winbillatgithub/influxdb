@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/arrow/go/arrow/array"
+	"github.com/apache/arrow/go/arrow/memory"
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/arrow"
 	"github.com/influxdata/flux/execute"
@@ -16,17 +17,21 @@ import (
 // splitWindows will split a windowTable by creating a new table from each
 // row and modifying the group key to use the start and stop values from
 // that row.
-func splitWindows(ctx context.Context, in flux.Table, f func(t flux.Table) error) error {
+func splitWindows(ctx context.Context, alloc memory.Allocator, in flux.Table, selector bool, f func(t flux.Table) error) error {
 	wts := &windowTableSplitter{
-		ctx: ctx,
-		in:  in,
+		ctx:      ctx,
+		in:       in,
+		alloc:    alloc,
+		selector: selector,
 	}
 	return wts.Do(f)
 }
 
 type windowTableSplitter struct {
-	ctx context.Context
-	in  flux.Table
+	ctx      context.Context
+	in       flux.Table
+	alloc    memory.Allocator
+	selector bool
 }
 
 func (w *windowTableSplitter) Do(f func(flux.Table) error) error {
@@ -55,11 +60,22 @@ func (w *windowTableSplitter) Do(f func(flux.Table) error) error {
 			arrs[j] = getColumnValues(cr, j)
 		}
 
+		values := arrs[valueColIdx]
+
 		for i, n := 0, cr.Len(); i < n; i++ {
 			startT, stopT := start.Value(i), stop.Value(i)
 
 			// Rewrite the group key using the new time.
 			key := groupKeyForWindow(cr.Key(), startT, stopT)
+			if w.selector && values.IsNull(i) {
+				// Produce an empty table if the value is null
+				// and this is a selector.
+				table := execute.NewEmptyTable(key, cr.Cols())
+				if err := f(table); err != nil {
+					return err
+				}
+				continue
+			}
 
 			// Produce a slice for each column into a new
 			// table buffer.

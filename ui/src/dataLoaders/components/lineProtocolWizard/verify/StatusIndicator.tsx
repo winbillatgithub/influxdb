@@ -70,12 +70,9 @@ const mstp = ({
   dataLoading: {
     dataLoaders: {lpStatus, lpError},
   },
-}: AppState): StateProps => ({
+}: AppState) => ({
   status: lpStatus,
   errorMessage: lpError,
 })
 
-export default connect<StateProps, {}, {}>(
-  mstp,
-  null
-)(StatusIndicator)
+export default connect<StateProps, {}, {}>(mstp, null)(StatusIndicator)

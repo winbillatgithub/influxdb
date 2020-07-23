@@ -1,5 +1,5 @@
 import React, {FC, useEffect, useState} from 'react'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps, useDispatch} from 'react-redux'
 import {getDashboards} from 'src/dashboards/actions/thunks'
 import {
   createCellWithView,
@@ -34,21 +34,10 @@ import {
 } from '@influxdata/clockface'
 import {Notification, NotificationStyle} from 'src/types'
 import {getOrg} from 'src/organizations/selectors'
+import {event} from 'src/cloud/utils/reporting'
 
 // Actions
 import {notify as notifyAction} from 'src/shared/actions/notifications'
-
-interface StateProps {
-  dashboards: Dashboard[]
-  orgID: string
-}
-
-interface DispatchProps {
-  loadDashboards: typeof getDashboards
-  createViewAndDashboard: typeof createDashboardWithView
-  createView: typeof createCellWithView
-  notify: typeof notifyAction
-}
 
 interface OwnProps {
   query: string
@@ -56,7 +45,8 @@ interface OwnProps {
   onClose: () => void
 }
 
-type Props = StateProps & DispatchProps & OwnProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = ReduxProps & OwnProps
 
 const ExportConfirmationNotification = (
   dashboardName: string
@@ -76,16 +66,16 @@ const DashboardList: FC<Props> = ({
   properties,
   onClose,
   dashboards,
-  loadDashboards,
   createView,
   createViewAndDashboard,
 }) => {
+  const dispatch = useDispatch()
   const [selectedDashboard, setSelectedDashboard] = useState(null)
   const [newName, setNewName] = useState(DEFAULT_DASHBOARD_NAME)
 
   useEffect(() => {
-    loadDashboards()
-  }, [])
+    dispatch(getDashboards())
+  }, [dispatch])
 
   const isEditingName =
     selectedDashboard && selectedDashboard.id === DashboardTemplate.id
@@ -144,7 +134,10 @@ const DashboardList: FC<Props> = ({
   const saveStatus = selectedDashboard
     ? ComponentStatus.Default
     : ComponentStatus.Disabled
+
   const save = () => {
+    event('Save Visulization to Dashboard')
+
     const view = {
       name: 'From Flow', // TODO: move meta.name to pipe.name so that we can route the name through
       properties: {
@@ -168,6 +161,11 @@ const DashboardList: FC<Props> = ({
 
     onClose()
   }
+  const cancel = () => {
+    event('Save Visulization to Dashboard Canceled')
+
+    onClose()
+  }
 
   return (
     <div className="notebook-visualization--dashboard-list">
@@ -186,7 +184,7 @@ const DashboardList: FC<Props> = ({
       >
         <SquareButton
           icon={IconFont.Remove}
-          onClick={onClose}
+          onClick={cancel}
           titleText="Cancel"
         />
         <SquareButton
@@ -195,6 +193,7 @@ const DashboardList: FC<Props> = ({
           titleText="Save to Dashboard"
           status={saveStatus}
           color={ComponentColor.Success}
+          className="flows-export-visualization-success"
         />
       </FlexBox>
     </div>
@@ -203,7 +202,7 @@ const DashboardList: FC<Props> = ({
 
 export {DashboardList}
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const dashboards = getAll<Dashboard>(state, ResourceType.Dashboards)
   const orgID = getOrg(state).id
 
@@ -213,14 +212,12 @@ const mstp = (state: AppState): StateProps => {
   }
 }
 
-const mdtp: DispatchProps = {
-  loadDashboards: getDashboards,
+const mdtp = {
   createView: createCellWithView,
   createViewAndDashboard: createDashboardWithView,
   notify: notifyAction,
 }
 
-export default connect<StateProps, DispatchProps, OwnProps>(
-  mstp,
-  mdtp
-)(DashboardList)
+const connector = connect(mstp, mdtp)
+
+export default connector(DashboardList)

@@ -91,7 +91,7 @@ const ClientRubyOverlay: FunctionComponent<Props> = props => {
   )
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const {id} = getOrg(state)
 
   return {
@@ -100,7 +100,4 @@ const mstp = (state: AppState): StateProps => {
 }
 
 export {ClientRubyOverlay}
-export default connect<StateProps, {}, Props>(
-  mstp,
-  null
-)(ClientRubyOverlay)
+export default connect<StateProps, {}, Props>(mstp, null)(ClientRubyOverlay)

@@ -1,34 +1,43 @@
-import React, {FC, useMemo} from 'react'
+import React, {FC, useMemo, useCallback} from 'react'
 import {default as StatelessAutoRefreshDropdown} from 'src/shared/components/dropdown_auto_refresh/AutoRefreshDropdown'
-import {TimeContextProps} from 'src/notebooks/components/header/Buttons'
+import {TimeContextProps} from 'src/notebooks/components/header'
 import {TimeBlock} from 'src/notebooks/context/time'
 import {AutoRefreshStatus} from 'src/types'
+
+// Utils
+import {event} from 'src/cloud/utils/reporting'
 
 const AutoRefreshDropdown: FC<TimeContextProps> = ({context, update}) => {
   const {refresh} = context
 
-  const updateRefresh = (interval: number) => {
-    const status =
-      interval === 0 ? AutoRefreshStatus.Paused : AutoRefreshStatus.Active
+  const updateRefresh = useCallback(
+    (interval: number) => {
+      const status =
+        interval === 0 ? AutoRefreshStatus.Paused : AutoRefreshStatus.Active
 
-    update({
-      refresh: {
-        status,
-        interval,
-      },
-    } as TimeBlock)
-  }
+      event('Auto Refresh Updated', {
+        interval: '' + interval,
+      })
 
-  return useMemo(
-    () => (
+      update({
+        refresh: {
+          status,
+          interval,
+        },
+      } as TimeBlock)
+    },
+    [update]
+  )
+
+  return useMemo(() => {
+    return (
       <StatelessAutoRefreshDropdown
         selected={refresh}
         onChoose={updateRefresh}
         showManualRefresh={false}
       />
-    ),
-    [refresh]
-  )
+    )
+  }, [refresh, updateRefresh])
 }
 
 export default AutoRefreshDropdown

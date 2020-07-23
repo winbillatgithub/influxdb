@@ -55,11 +55,8 @@ const CheckConditionsCard: FC<Props> = ({checkType}) => {
   )
 }
 
-const mstp = ({alertBuilder: {type}}: AppState): StateProps => {
+const mstp = ({alertBuilder: {type}}: AppState) => {
   return {checkType: type}
 }
 
-export default connect<StateProps, {}, {}>(
-  mstp,
-  null
-)(CheckConditionsCard)
+export default connect<StateProps, {}, {}>(mstp, null)(CheckConditionsCard)

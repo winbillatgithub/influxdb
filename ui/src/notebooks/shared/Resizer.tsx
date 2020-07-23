@@ -1,13 +1,21 @@
 // Libraries
-import React, {FC, useRef, useEffect, ReactNode, useState} from 'react'
+import React, {
+  FC,
+  useRef,
+  useEffect,
+  useContext,
+  ReactNode,
+  useState,
+  useCallback,
+} from 'react'
 import classnames from 'classnames'
 
 // Components
 import ResizerHeader from 'src/notebooks/shared/ResizerHeader'
+import {PipeContext} from 'src/notebooks/context/pipe'
 
 // Types
 import {IconFont} from '@influxdata/clockface'
-import {PipeData} from 'src/notebooks/index'
 
 // Styles
 import 'src/notebooks/shared/Resizer.scss'
@@ -15,8 +23,6 @@ import 'src/notebooks/shared/Resizer.scss'
 export type Visibility = 'visible' | 'hidden'
 
 interface Props {
-  data: PipeData
-  onUpdate: (data: PipeData) => void
   children: ReactNode
   /** If true the resizer can be toggled between Hidden & Visible */
   toggleVisibilityEnabled: boolean
@@ -26,6 +32,8 @@ interface Props {
   emptyIcon?: IconFont
   /** Text to display when resizing is disabled */
   emptyText: string
+  /** Text to display when there is an error with the results */
+  error?: string
   /** Text to display when the resizer is collapsed */
   hiddenText?: string
   /** When resizing is enabled the panel cannot be resized below this amount */
@@ -37,17 +45,17 @@ interface Props {
 const MINIMUM_RESIZER_HEIGHT = 180
 
 const Resizer: FC<Props> = ({
-  data,
-  onUpdate,
   children,
-  emptyIcon = IconFont.Zap,
+  emptyIcon,
   emptyText,
+  error,
   hiddenText = 'Hidden',
   minimumHeight = MINIMUM_RESIZER_HEIGHT,
   resizingEnabled,
   additionalControls,
   toggleVisibilityEnabled,
 }) => {
+  const {data, update} = useContext(PipeContext)
   const height = data.panelHeight
   const visibility = data.panelVisibility
 
@@ -60,39 +68,33 @@ const Resizer: FC<Props> = ({
     [`panel-resizer--body__${visibility}`]: resizingEnabled && visibility,
   })
 
-  const updateResultsStyle = (): void => {
+  let _emptyIcon = emptyIcon
+  if (error) {
+    _emptyIcon = IconFont.AlertTriangle
+  } else {
+    _emptyIcon = emptyIcon || IconFont.Zap
+  }
+
+  const handleUpdateVisibility = (panelVisibility: Visibility): void => {
+    update({panelVisibility})
+  }
+
+  const handleUpdateHeight = (panelHeight: number): void => {
+    update({panelHeight})
+  }
+
+  const updateResultsStyle = useCallback((): void => {
     if (bodyRef.current && resizingEnabled && visibility === 'visible') {
       bodyRef.current.setAttribute('style', `height: ${size}px`)
     } else {
       bodyRef.current.setAttribute('style', '')
     }
-  }
+  }, [size, resizingEnabled, visibility])
 
-  const handleUpdateVisibility = (panelVisibility: Visibility): void => {
-    onUpdate({panelVisibility})
-  }
-
-  const handleUpdateHeight = (panelHeight: number): void => {
-    onUpdate({panelHeight})
-  }
-
-  // Ensure results renders with proper height on initial render
+  // Ensure styles update when state & props update
   useEffect(() => {
     updateResultsStyle()
-  }, [])
-
-  // Update results height when associated props change
-  useEffect(() => {
-    updateResultsStyle()
-  }, [size, visibility, resizingEnabled])
-
-  // Update local height when context height changes
-  // so long as it is a different value
-  useEffect(() => {
-    if (height !== size) {
-      updateSize(height)
-    }
-  }, [height])
+  }, [size, resizingEnabled, visibility, updateResultsStyle])
 
   // Handle changes in drag state
   useEffect(() => {
@@ -110,7 +112,7 @@ const Resizer: FC<Props> = ({
         )
       handleUpdateHeight(size)
     }
-  }, [isDragging])
+  }, [isDragging]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMouseMove = (e: MouseEvent): void => {
     if (!bodyRef.current) {
@@ -145,18 +147,26 @@ const Resizer: FC<Props> = ({
 
   let body = children
 
-  if (!resizingEnabled) {
-    body = <div className="panel-resizer--empty">{emptyText}</div>
+  if (error) {
+    body = <div className="panel-resizer--error">{error}</div>
+  } else {
+    if (!resizingEnabled) {
+      body = <div className="panel-resizer--empty">{emptyText}</div>
+    }
+
+    if (resizingEnabled && visibility === 'hidden') {
+      body = <div className="panel-resizer--empty">{hiddenText}</div>
+    }
   }
 
-  if (resizingEnabled && visibility === 'hidden') {
-    body = <div className="panel-resizer--empty">{hiddenText}</div>
-  }
+  const klass = classnames('panel-resizer', {
+    'panel-resizer--error-state': error,
+  })
 
   return (
-    <div className="panel-resizer">
+    <div className={klass}>
       <ResizerHeader
-        emptyIcon={emptyIcon}
+        emptyIcon={_emptyIcon}
         visibility={visibility}
         onStartDrag={handleMouseDown}
         dragHandleRef={dragHandleRef}

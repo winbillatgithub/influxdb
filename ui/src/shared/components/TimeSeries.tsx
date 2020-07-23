@@ -1,8 +1,8 @@
 // Library
 import React, {Component, RefObject, CSSProperties} from 'react'
 import {isEqual} from 'lodash'
-import {connect} from 'react-redux'
-import {withRouter, WithRouterProps} from 'react-router'
+import {connect, ConnectedProps} from 'react-redux'
+import {withRouter, RouteComponentProps} from 'react-router-dom'
 import {
   default as fromFlux,
   FromFluxResult,
@@ -32,6 +32,7 @@ import {
   isDemoDataAvailabilityError,
   demoDataError,
 } from 'src/cloud/utils/demoDataErrors'
+import {hashCode} from 'src/queryCache/actions'
 
 // Constants
 import {
@@ -41,8 +42,10 @@ import {
 } from 'src/shared/copy/notifications'
 import {TIME_RANGE_START, TIME_RANGE_STOP} from 'src/variables/constants'
 
-// Actions
+// Actions & Selectors
 import {notify as notifyAction} from 'src/shared/actions/notifications'
+import {setQueryResultsByQueryID} from 'src/queryCache/actions'
+import {hasUpdatedTimeRangeInVEO} from 'src/shared/selectors/app'
 
 // Types
 import {
@@ -52,11 +55,10 @@ import {
   Bucket,
   ResourceType,
   DashboardQuery,
-  Variable,
-  VariableAssignment,
   AppState,
   CancelBox,
 } from 'src/types'
+import {event} from 'src/cloud/utils/reporting'
 
 interface QueriesState {
   files: string[] | null
@@ -68,28 +70,18 @@ interface QueriesState {
   statuses: StatusRow[][]
 }
 
-interface StateProps {
-  queryLink: string
-  buckets: Bucket[]
-  variables: Variable[]
-}
-
 interface OwnProps {
-  className: string
-  style: CSSProperties
+  className?: string
+  style?: CSSProperties
   queries: DashboardQuery[]
-  variables?: VariableAssignment[]
   submitToken: number
   implicitSubmit?: boolean
   children: (r: QueriesState) => JSX.Element
-  check: Partial<Check>
+  check?: Partial<Check>
 }
 
-interface DispatchProps {
-  notify: typeof notifyAction
-}
-
-type Props = StateProps & OwnProps & DispatchProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = OwnProps & ReduxProps & RouteComponentProps<{orgID: string}>
 
 interface State {
   loading: RemoteDataState
@@ -111,7 +103,7 @@ const defaultState = (): State => ({
   statuses: [[]],
 })
 
-class TimeSeries extends Component<Props & WithRouterProps, State> {
+class TimeSeries extends Component<Props, State> {
   public static defaultProps = {
     implicitSubmit: true,
     className: 'time-series-container',
@@ -181,7 +173,13 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
   }
 
   private reload = async () => {
-    const {variables, notify, check, buckets} = this.props
+    const {
+      buckets,
+      check,
+      notify,
+      onSetQueryResultsByQueryID,
+      variables,
+    } = this.props
     const queries = this.props.queries.filter(({text}) => !!text.trim())
 
     if (!queries.length) {
@@ -215,11 +213,12 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
       // Issue new queries
       this.pendingResults = queries.map(({text}) => {
         const orgID =
-          getOrgIDFromBuckets(text, buckets) || this.props.params.orgID
+          getOrgIDFromBuckets(text, buckets) || this.props.match.params.orgID
 
         const windowVars = getWindowVars(text, vars)
         const extern = buildVarsOption([...vars, ...windowVars])
 
+        event('runQuery', {context: 'TimeSeries'})
         return runQuery(orgID, text, extern)
       })
 
@@ -230,7 +229,7 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
       if (check) {
         const extern = buildVarsOption(vars)
         this.pendingCheckStatuses = runStatusesQuery(
-          this.props.params.orgID,
+          this.props.match.params.orgID,
           check.id,
           extern
         )
@@ -242,7 +241,9 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
       for (const result of results) {
         if (result.type === 'UNKNOWN_ERROR') {
           if (isDemoDataAvailabilityError(result.code, result.message)) {
-            notify(demoDataAvailability(demoDataError(this.props.params.orgID)))
+            notify(
+              demoDataAvailability(demoDataError(this.props.match.params.orgID))
+            )
           }
           errorMessage = result.message
           throw new Error(result.message)
@@ -270,6 +271,11 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
       }
 
       this.pendingReload = false
+      const queryText = queries.map(({text}) => text).join('')
+      const queryID = hashCode(queryText)
+      if (queryID && files.length) {
+        onSetQueryResultsByQueryID(queryID, files)
+      }
 
       this.setState({
         giraffeResult,
@@ -298,6 +304,17 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
   }
 
   private shouldReload(prevProps: Props) {
+    if (this.props.hasUpdatedTimeRangeInVEO) {
+      return false
+    }
+
+    if (
+      prevProps.hasUpdatedTimeRangeInVEO &&
+      !this.props.hasUpdatedTimeRangeInVEO
+    ) {
+      return true
+    }
+
     if (prevProps.submitToken !== this.props.submitToken) {
       return true
     }
@@ -318,14 +335,16 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
   }
 }
 
-const mstp = (state: AppState, props: OwnProps): StateProps => {
+const mstp = (state: AppState, props: OwnProps) => {
   const timeRange = getTimeRange(state)
 
   // NOTE: cannot use getAllVariables here because the TimeSeries
   // component appends it automatically. That should be fixed
   // NOTE: limit the variables returned to those that are used,
   // as this prevents resending when other queries get sent
-  const queries = props.queries.map(q => q.text).filter(t => !!t.trim())
+  const queries = props.queries
+    ? props.queries.map(q => q.text).filter(t => !!t.trim())
+    : []
   const vars = getVariables(state).filter(v =>
     queries.some(t => isInQuery(t, v))
   )
@@ -336,17 +355,18 @@ const mstp = (state: AppState, props: OwnProps): StateProps => {
   ]
 
   return {
+    hasUpdatedTimeRangeInVEO: hasUpdatedTimeRangeInVEO(state),
     queryLink: state.links.query.self,
     buckets: getAll<Bucket>(state, ResourceType.Buckets),
     variables,
   }
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
   notify: notifyAction,
+  onSetQueryResultsByQueryID: setQueryResultsByQueryID,
 }
 
-export default connect<StateProps, {}, OwnProps>(
-  mstp,
-  mdtp
-)(withRouter(TimeSeries))
+const connector = connect(mstp, mdtp)
+
+export default connector(withRouter(TimeSeries))

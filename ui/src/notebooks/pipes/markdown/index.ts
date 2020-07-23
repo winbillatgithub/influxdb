@@ -167,10 +167,11 @@ which you wish to be displayed literally, ex.: \`foo\`, \*bar\*, etc.`
 
 register({
   type: 'markdown',
+  family: 'passThrough',
   component: MarkdownPanel,
   button: 'Markdown',
   initial: () => ({
-    text: TEST_MODE ? TESTCASE : '',
+    text: TEST_MODE ? TESTCASE : 'Type markdown here',
     mode: 'edit',
   }),
 })

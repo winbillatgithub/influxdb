@@ -1,19 +1,10 @@
 // Libraries
 import React, {PureComponent} from 'react'
-import {withRouter, WithRouterProps} from 'react-router'
+import {withRouter, RouteComponentProps} from 'react-router-dom'
 
 // Components
-import {
-  Alignment,
-  Gradients,
-  Heading,
-  HeadingElement,
-  Orientation,
-  Overlay,
-  Panel,
-  Tabs,
-} from '@influxdata/clockface'
-
+import {Alignment, Orientation, Overlay, Tabs} from '@influxdata/clockface'
+import CommunityTemplateName from 'src/templates/components/CommunityTemplateName'
 import {CommunityTemplateReadme} from 'src/templates/components/CommunityTemplateReadme'
 import {CommunityTemplateContents} from 'src/templates/components/CommunityTemplateContents'
 
@@ -23,7 +14,8 @@ import {ComponentStatus} from '@influxdata/clockface'
 interface OwnProps {
   isVisible?: boolean
   onDismissOverlay: () => void
-  onSubmit: (importString: string, orgID: string) => void
+  onInstall: () => void
+  resourceCount: number
   status?: ComponentStatus
   templateName: string
   updateStatus?: (status: ComponentStatus) => void
@@ -40,7 +32,7 @@ enum Tab {
 
 type ActiveTab = Tab.IncludedResources | Tab.Readme
 
-type Props = OwnProps & WithRouterProps
+type Props = OwnProps & RouteComponentProps<{orgID: string}>
 
 class CommunityTemplateInstallerOverlayUnconnected extends PureComponent<
   Props,
@@ -55,9 +47,7 @@ class CommunityTemplateInstallerOverlayUnconnected extends PureComponent<
   }
 
   public render() {
-    const {isVisible, templateName} = this.props
-
-    const resourceCount = 'some'
+    const {isVisible, onInstall, resourceCount, templateName} = this.props
 
     return (
       <Overlay visible={isVisible}>
@@ -67,15 +57,11 @@ class CommunityTemplateInstallerOverlayUnconnected extends PureComponent<
             onDismiss={this.onDismiss}
           />
           <Overlay.Body>
-            <Panel border={true} gradient={Gradients.RebelAlliance}>
-              <Panel.Header>
-                <Heading element={HeadingElement.H3}>{templateName}</Heading>
-              </Panel.Header>
-              <Panel.Body>
-                Installing this template will create {resourceCount} resources
-                in your system
-              </Panel.Body>
-            </Panel>
+            <CommunityTemplateName
+              templateName={templateName}
+              resourceCount={resourceCount}
+              onClickInstall={onInstall}
+            />
             <Tabs.Container orientation={Orientation.Horizontal}>
               <Tabs.Tabs alignment={Alignment.Center}>
                 <Tabs.Tab
@@ -116,6 +102,6 @@ class CommunityTemplateInstallerOverlayUnconnected extends PureComponent<
   }
 }
 
-export const CommunityTemplateInstallerOverlay = withRouter<OwnProps>(
+export const CommunityTemplateInstallerOverlay = withRouter(
   CommunityTemplateInstallerOverlayUnconnected
 )

@@ -1,21 +1,21 @@
 // APIs
+import {normalize} from 'normalizr'
 import {queryBuilderFetcher} from 'src/timeMachine/apis/QueryBuilderFetcher'
 import * as api from 'src/client'
 import {get} from 'lodash'
 import {fetchDemoDataBuckets} from 'src/cloud/apis/demodata'
 
 // Utils
-import {getActiveQuery, getActiveTimeMachine} from 'src/timeMachine/selectors'
-import {getTimeRangeWithTimezone} from 'src/dashboards/selectors'
-import {reportSimpleQueryPerformanceEvent} from 'src/cloud/utils/reporting'
+import {event} from 'src/cloud/utils/reporting'
 
 // Types
 import {
+  Bucket,
+  BucketEntities,
   BuilderAggregateFunctionType,
   GetState,
   RemoteDataState,
   ResourceType,
-  Bucket,
 } from 'src/types'
 import {Dispatch} from 'react'
 import {BuilderFunctionsType} from '@influxdata/influx'
@@ -23,13 +23,24 @@ import {
   Action as AlertBuilderAction,
   setEvery,
 } from 'src/alerting/actions/alertBuilder'
+import {Action as BucketAction} from 'src/buckets/actions/creators'
 
 // Selectors
 import {getOrg} from 'src/organizations/selectors'
 import {getAll} from 'src/resources/selectors'
+import {getStatus} from 'src/resources/selectors'
+import {getTimeRangeWithTimezone} from 'src/dashboards/selectors'
+import {getActiveQuery, getActiveTimeMachine} from 'src/timeMachine/selectors'
+
+//Actions
+import {editActiveQueryWithBuilderSync} from 'src/timeMachine/actions'
+import {setBuckets} from 'src/buckets/actions/creators'
 
 // Constants
 import {LIMIT} from 'src/resources/constants'
+
+// Schemas
+import {arrayOfBuckets} from 'src/schemas'
 
 export type Action =
   | ReturnType<typeof setBuilderAggregateFunctionType>
@@ -148,12 +159,16 @@ export const selectAggregateWindow = (period: string) => (
 }
 
 export const loadBuckets = () => async (
-  dispatch: Dispatch<Action | ReturnType<typeof selectBucket>>,
+  dispatch: Dispatch<Action | ReturnType<typeof selectBucket> | BucketAction>,
   getState: GetState
 ) => {
-  reportSimpleQueryPerformanceEvent('loadBuckets function start')
+  if (
+    getStatus(getState(), ResourceType.Buckets) === RemoteDataState.NotStarted
+  ) {
+    dispatch(setBuckets(RemoteDataState.Loading))
+  }
+  const startTime = Date.now()
   const orgID = getOrg(getState()).id
-
   dispatch(setBuilderBucketsStatus(RemoteDataState.Loading))
 
   try {
@@ -164,6 +179,13 @@ export const loadBuckets = () => async (
     }
 
     const demoDataBuckets = await fetchDemoDataBuckets()
+
+    const normalizedBuckets = normalize<Bucket, BucketEntities, string[]>(
+      [...resp.data.buckets, ...demoDataBuckets],
+      arrayOfBuckets
+    )
+
+    dispatch(setBuckets(RemoteDataState.Done, normalizedBuckets))
 
     const allBuckets = [...resp.data.buckets, ...demoDataBuckets].map(
       b => b.name
@@ -182,7 +204,13 @@ export const loadBuckets = () => async (
     } else {
       dispatch(selectBucket(buckets[0], true))
     }
-    reportSimpleQueryPerformanceEvent('loadBuckets function end')
+    event(
+      'loadBuckets function',
+      {
+        time: startTime,
+      },
+      {duration: Date.now() - startTime}
+    )
   } catch (e) {
     if (e.name === 'CancellationError') {
       return
@@ -205,7 +233,7 @@ export const loadTagSelector = (index: number) => async (
   dispatch: Dispatch<Action | ReturnType<typeof loadTagSelectorValues>>,
   getState: GetState
 ) => {
-  reportSimpleQueryPerformanceEvent('loadTagSelector function start')
+  const startTime = Date.now()
 
   const {buckets, tags} = getActiveQuery(getState()).builderConfig
 
@@ -261,7 +289,13 @@ export const loadTagSelector = (index: number) => async (
 
     dispatch(setBuilderTagKeys(index, keys))
     dispatch(loadTagSelectorValues(index))
-    reportSimpleQueryPerformanceEvent('loadTagSelector function end')
+    event(
+      'loadTagSelector function',
+      {
+        time: startTime,
+      },
+      {duration: Date.now() - startTime}
+    )
   } catch (e) {
     if (e.name === 'CancellationError') {
       return
@@ -276,7 +310,7 @@ const loadTagSelectorValues = (index: number) => async (
   dispatch: Dispatch<Action | ReturnType<typeof loadTagSelector>>,
   getState: GetState
 ) => {
-  reportSimpleQueryPerformanceEvent('loadTagSelectorValues function start')
+  const startTime = Date.now()
 
   const state = getState()
   const {buckets, tags} = getActiveQuery(state).builderConfig
@@ -323,7 +357,13 @@ const loadTagSelectorValues = (index: number) => async (
 
     dispatch(setBuilderTagValues(index, values))
     dispatch(loadTagSelector(index + 1))
-    reportSimpleQueryPerformanceEvent('loadTagSelectorValues function end')
+    event(
+      'loadTagSelectorValues function',
+      {
+        time: startTime,
+      },
+      {duration: Date.now() - startTime}
+    )
   } catch (e) {
     if (e.name === 'CancellationError') {
       return
@@ -443,11 +483,14 @@ export const reloadTagSelectors = () => (dispatch: Dispatch<Action>) => {
 }
 
 export const setBuilderBucketIfExists = (bucketName: string) => (
-  dispatch: Dispatch<Action>,
+  dispatch: Dispatch<
+    Action | ReturnType<typeof editActiveQueryWithBuilderSync>
+  >,
   getState: GetState
 ) => {
   const buckets = getAll<Bucket>(getState(), ResourceType.Buckets)
   if (buckets.find(b => b.name === bucketName)) {
+    dispatch(editActiveQueryWithBuilderSync())
     dispatch(setBuilderBucket(bucketName, true))
   }
 }

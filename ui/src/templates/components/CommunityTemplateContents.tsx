@@ -1,161 +1,233 @@
 // Libraries
 import React, {PureComponent} from 'react'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps} from 'react-redux'
 
-import {AppState, CommunityTemplate} from 'src/types'
+// Types
+import {AppState} from 'src/types'
 
-import {Heading, HeadingElement, Page, Panel} from '@influxdata/clockface'
+// Components
+import {
+  Panel,
+  FlexBox,
+  ComponentSize,
+  FlexDirection,
+  AlignItems,
+  Label,
+} from '@influxdata/clockface'
+import CommunityTemplateListItem from 'src/templates/components/CommunityTemplateListItem'
+import CommunityTemplateListGroup from 'src/templates/components/CommunityTemplateListGroup'
 
-interface StateProps {
-  activeCommunityTemplate: CommunityTemplate
-}
+import {toggleTemplateResourceInstall} from 'src/templates/actions/creators'
+import {getResourceInstallCount} from 'src/templates/selectors'
 
-class CommunityTemplateContentsUnconnected extends PureComponent<StateProps> {
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = ReduxProps
+
+class CommunityTemplateContentsUnconnected extends PureComponent<Props> {
   render() {
-    const {activeCommunityTemplate} = this.props
-    if (!Object.keys(activeCommunityTemplate).length) {
+    const {summary} = this.props
+    if (!Object.keys(summary).length) {
       return (
-        <Page>
-          <Panel>
-            <Panel.Header>Calculating template resource needs...</Panel.Header>
-          </Panel>
-        </Page>
+        <Panel>
+          <Panel.Header>Calculating template resource needs...</Panel.Header>
+        </Panel>
       )
     }
 
     return (
-      <Page className="community-templates-installer">
-        {Array.isArray(activeCommunityTemplate.dashboards) &&
-          activeCommunityTemplate.dashboards.map(dashboard => {
-            return (
-              <Panel key={dashboard.pkgName}>
-                <Panel.Header>
-                  <Heading element={HeadingElement.H4}>Dashboard</Heading>
-                </Panel.Header>
-                <Panel.Body>
-                  Name: {dashboard.name}
-                  <br />
-                  {dashboard.description}
-                  <br />
-                  Charts: {dashboard.charts.length}
-                </Panel.Body>
-              </Panel>
-            )
-          })}
-        {Array.isArray(activeCommunityTemplate.telegrafConfigs) &&
-          activeCommunityTemplate.telegrafConfigs.map(telegrafConfig => {
-            return (
-              <Panel.Panel key={telegrafConfig.pkgName}>
-                <Panel.Header>
-                  <Heading element={HeadingElement.H4}>
-                    Telegraf Configuration
-                  </Heading>
-                </Panel.Header>
-                <Panel.Body>
-                  Name: {telegrafConfig.pkgName}
-                  <br />
-                  {telegrafConfig.description}
-                </Panel.Body>
-              </Panel.Panel>
-            )
-          })}
-        {Array.isArray(activeCommunityTemplate.buckets) &&
-          activeCommunityTemplate.buckets.map(bucket => {
-            return (
-              <Panel.Panel key={bucket.pkgName}>
-                <Panel.Header>
-                  <Heading element={HeadingElement.H4}>Bucket</Heading>
-                </Panel.Header>
-                <Panel.Body>
-                  Name: {bucket.name}
-                  <br />
-                  {bucket.description}
-                </Panel.Body>
-              </Panel.Panel>
-            )
-          })}
-        {Array.isArray(activeCommunityTemplate.checks) &&
-          activeCommunityTemplate.checks.map(check => {
-            return (
-              <Panel.Panel key={check.pkgName}>
-                <Panel.Header>
-                  <Heading element={HeadingElement.H4}>Check</Heading>
-                </Panel.Header>
-                <Panel.Body>
-                  Name: {check.check.name}
-                  <br />
-                  {check.description}
-                </Panel.Body>
-              </Panel.Panel>
-            )
-          })}
-        {Array.isArray(activeCommunityTemplate.variables) &&
-          activeCommunityTemplate.variables.map(variable => {
-            return (
-              <Panel.Panel key={variable.pkgName}>
-                <Panel.Header>
-                  <Heading element={HeadingElement.H4}>Variable</Heading>
-                </Panel.Header>
-                <Panel.Body>
-                  Name: {variable.name}
-                  <br />
-                  Type: {variable.arguments.type}
-                  <br />
-                  {variable.description}
-                </Panel.Body>
-              </Panel.Panel>
-            )
-          })}
-        {Array.isArray(activeCommunityTemplate.notificationRules) &&
-          activeCommunityTemplate.notificationRules.map(notificationRule => {
-            return (
-              <Panel.Panel key={notificationRule.pkgName}>
-                <Panel.Header>
-                  <Heading element={HeadingElement.H4}>
-                    Notification Rule
-                  </Heading>
-                </Panel.Header>
-                <Panel.Body>
-                  Name: {notificationRule.name}
-                  <br />
-                  {notificationRule.description}
-                </Panel.Body>
-              </Panel.Panel>
-            )
-          })}
-        {Array.isArray(activeCommunityTemplate.labels) &&
-          activeCommunityTemplate.labels.map(label => {
-            return (
-              <Panel.Panel key={label.pkgName}>
-                <Panel.Header>
-                  <Heading element={HeadingElement.H4}>Label</Heading>
-                </Panel.Header>
-                <Panel.Body>
-                  Name: {label.name}
-                  <br />
-                  {Object.keys(label.properties).map(property => {
-                    return (
-                      <aside key={property}>
-                        {property}: {label.properties[property]}
-                      </aside>
+      <FlexBox
+        margin={ComponentSize.Small}
+        direction={FlexDirection.Column}
+        alignItems={AlignItems.Stretch}
+        className="community-templates-installer"
+      >
+        <CommunityTemplateListGroup
+          title="Dashboards"
+          count={getResourceInstallCount(summary.dashboards)}
+        >
+          {Array.isArray(summary.dashboards) &&
+            summary.dashboards.map(dashboard => {
+              return (
+                <CommunityTemplateListItem
+                  shouldInstall={dashboard.shouldInstall}
+                  handleToggle={() => {
+                    this.props.toggleTemplateResourceInstall(
+                      'dashboards',
+                      dashboard.templateMetaName,
+                      !dashboard.shouldInstall
                     )
-                  })}
-                </Panel.Body>
-              </Panel.Panel>
-            )
-          })}
-      </Page>
+                  }}
+                  key={dashboard.templateMetaName}
+                  title={dashboard.name}
+                  description={dashboard.description}
+                >
+                  Charts: {dashboard.charts.length}
+                </CommunityTemplateListItem>
+              )
+            })}
+        </CommunityTemplateListGroup>
+        <CommunityTemplateListGroup
+          title="Telegraf Configurations"
+          count={getResourceInstallCount(summary.telegrafConfigs)}
+        >
+          {Array.isArray(summary.telegrafConfigs) &&
+            summary.telegrafConfigs.map(telegrafConfig => {
+              return (
+                <CommunityTemplateListItem
+                  shouldInstall={telegrafConfig.shouldInstall}
+                  handleToggle={() => {
+                    this.props.toggleTemplateResourceInstall(
+                      'telegrafConfigs',
+                      telegrafConfig.templateMetaName,
+                      !telegrafConfig.shouldInstall
+                    )
+                  }}
+                  key={telegrafConfig.templateMetaName}
+                  title={telegrafConfig.templateMetaName}
+                  description={telegrafConfig.description}
+                />
+              )
+            })}
+        </CommunityTemplateListGroup>
+        <CommunityTemplateListGroup
+          title="Buckets"
+          count={getResourceInstallCount(summary.buckets)}
+        >
+          {Array.isArray(summary.buckets) &&
+            summary.buckets.map(bucket => {
+              return (
+                <CommunityTemplateListItem
+                  shouldDisableToggle={true}
+                  shouldInstall={true}
+                  handleToggle={() => {
+                    this.props.toggleTemplateResourceInstall(
+                      'buckets',
+                      bucket.templateMetaName,
+                      !bucket.shouldInstall
+                    )
+                  }}
+                  key={bucket.templateMetaName}
+                  title={bucket.name}
+                  description={bucket.description}
+                />
+              )
+            })}
+        </CommunityTemplateListGroup>
+        <CommunityTemplateListGroup
+          title="Checks"
+          count={getResourceInstallCount(summary.checks)}
+        >
+          {Array.isArray(summary.checks) &&
+            summary.checks.map(check => {
+              return (
+                <CommunityTemplateListItem
+                  shouldInstall={check.shouldInstall}
+                  handleToggle={() => {
+                    this.props.toggleTemplateResourceInstall(
+                      'checks',
+                      check.templateMetaName,
+                      !check.shouldInstall
+                    )
+                  }}
+                  key={check.templateMetaName}
+                  title={check.check.name}
+                  description={check.description}
+                />
+              )
+            })}
+        </CommunityTemplateListGroup>
+        <CommunityTemplateListGroup
+          title="Variables"
+          count={getResourceInstallCount(summary.variables)}
+        >
+          {Array.isArray(summary.variables) &&
+            summary.variables.map(variable => {
+              return (
+                <CommunityTemplateListItem
+                  shouldDisableToggle={true}
+                  shouldInstall={true}
+                  handleToggle={() => {
+                    this.props.toggleTemplateResourceInstall(
+                      'variables',
+                      variable.templateMetaName,
+                      !variable.shouldInstall
+                    )
+                  }}
+                  key={variable.templateMetaName}
+                  title={variable.name}
+                  description={variable.description}
+                >
+                  Type: {variable.arguments.type}
+                </CommunityTemplateListItem>
+              )
+            })}
+        </CommunityTemplateListGroup>
+        <CommunityTemplateListGroup
+          title="Notification Rules"
+          count={getResourceInstallCount(summary.notificationRules)}
+        >
+          {Array.isArray(summary.notificationRules) &&
+            summary.notificationRules.map(notificationRule => {
+              return (
+                <CommunityTemplateListItem
+                  shouldInstall={notificationRule.shouldInstall}
+                  handleToggle={() => {
+                    this.props.toggleTemplateResourceInstall(
+                      'notificationRules',
+                      notificationRule.templateMetaName,
+                      !notificationRule.shouldInstall
+                    )
+                  }}
+                  key={notificationRule.templateMetaName}
+                  title={notificationRule.name}
+                  description={notificationRule.description}
+                />
+              )
+            })}
+        </CommunityTemplateListGroup>
+        <CommunityTemplateListGroup
+          title="Labels"
+          count={getResourceInstallCount(summary.labels)}
+        >
+          {Array.isArray(summary.labels) &&
+            summary.labels.map(label => {
+              return (
+                <CommunityTemplateListItem
+                  shouldInstall={label.shouldInstall}
+                  handleToggle={() => {
+                    this.props.toggleTemplateResourceInstall(
+                      'labels',
+                      label.templateMetaName,
+                      !label.shouldInstall
+                    )
+                  }}
+                  key={label.templateMetaName}
+                >
+                  <Label
+                    description={label.properties.description}
+                    name={label.name}
+                    id={label.name}
+                    color={label.properties.color}
+                  />
+                </CommunityTemplateListItem>
+              )
+            })}
+        </CommunityTemplateListGroup>
+      </FlexBox>
     )
   }
 }
 
-const mstp = (state: AppState): StateProps => {
-  const {activeCommunityTemplate} = state.resources.templates
-
-  return {activeCommunityTemplate}
+const mstp = (state: AppState) => {
+  return {summary: state.resources.templates.communityTemplateToInstall.summary}
 }
 
-export const CommunityTemplateContents = connect<StateProps, {}, {}>(
-  mstp,
-  null
-)(CommunityTemplateContentsUnconnected)
+const mdtp = {
+  toggleTemplateResourceInstall,
+}
+
+const connector = connect(mstp, mdtp)
+
+export const CommunityTemplateContents = connector(
+  CommunityTemplateContentsUnconnected
+)

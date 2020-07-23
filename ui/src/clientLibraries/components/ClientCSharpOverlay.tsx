@@ -103,14 +103,11 @@ const ClientCSharpOverlay: FunctionComponent<Props> = props => {
   )
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   return {
     org: getOrg(state).id,
   }
 }
 
 export {ClientCSharpOverlay}
-export default connect<StateProps, {}, Props>(
-  mstp,
-  null
-)(ClientCSharpOverlay)
+export default connect<StateProps, {}, Props>(mstp, null)(ClientCSharpOverlay)
