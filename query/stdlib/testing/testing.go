@@ -167,6 +167,30 @@ var FluxEndToEndFeatureFlags = PerTestFeatureFlagMap{
 		"bare_sum_push": {
 			"pushDownWindowAggregateSum": "true",
 		},
+		"bare_mean_push": {
+			"pushDownWindowAggregateMean": "true",
+		},
+		"window_mean_push": {
+			"pushDownWindowAggregateMean": "true",
+		},
+		"bare_min_push": {
+			"pushDownWindowAggregateMin": "true",
+		},
+		"window_min_push": {
+			"pushDownWindowAggregateMin": "true",
+		},
+		"aggregate_window_min_push": {
+			"pushDownWindowAggregateMin": "true",
+		},
+		"bare_max_push": {
+			"pushDownWindowAggregateMax": "true",
+		},
+		"window_max_push": {
+			"pushDownWindowAggregateMax": "true",
+		},
+		"aggregate_window_max_push": {
+			"pushDownWindowAggregateMax": "true",
+		},
 		"merge_filters": {
 			"mergeFilterRule": "true",
 		},
