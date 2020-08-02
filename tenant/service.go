@@ -1,6 +1,8 @@
 package tenant
 
 import (
+	"context"
+
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/kit/metric"
 	"github.com/influxdata/influxdb/v2/label"
@@ -9,14 +11,39 @@ import (
 	"go.uber.org/zap"
 )
 
-type Service struct {
-	store *Store
+type contextKey string
+
+const (
+	ctxInternal contextKey = "influx/tenant/internal"
+)
+
+func internalCtx(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ctxInternal, true)
 }
 
-func NewService(st *Store) influxdb.TenantService {
-	return &Service{
-		store: st,
-	}
+func isInternal(ctx context.Context) bool {
+	_, ok := ctx.Value(ctxInternal).(bool)
+	return ok
+}
+
+type Service struct {
+	influxdb.UserService
+	influxdb.PasswordsService
+	influxdb.UserResourceMappingService
+	influxdb.OrganizationService
+	influxdb.BucketService
+}
+
+func NewService(st *Store) *Service {
+	svc := &Service{}
+	userSvc := NewUserSvc(st, svc)
+	svc.UserService = userSvc
+	svc.PasswordsService = userSvc
+	svc.UserResourceMappingService = NewUserResourceMappingSvc(st, svc)
+	svc.OrganizationService = NewOrganizationSvc(st, svc)
+	svc.BucketService = NewBucketSvc(st, svc)
+
+	return svc
 }
 
 type TenantSystem struct {
@@ -38,11 +65,10 @@ func NewSystem(store *Store, log *zap.Logger, reg prometheus.Registerer, metricO
 	}
 }
 
-func (ts *TenantSystem) NewOrgHTTPHandler(log *zap.Logger, labelSvc influxdb.LabelService, secretSvc influxdb.SecretService) *OrgHandler {
+func (ts *TenantSystem) NewOrgHTTPHandler(log *zap.Logger, secretSvc influxdb.SecretService) *OrgHandler {
 	secretHandler := secret.NewHandler(log, "id", secret.NewAuthedService(secretSvc))
 	urmHandler := NewURMHandler(log.With(zap.String("handler", "urm")), influxdb.OrgsResourceType, "id", ts.UserSvc, NewAuthedURMService(ts.OrgSvc, ts.UrmSvc))
-	labelHandler := label.NewHTTPEmbeddedHandler(log.With(zap.String("handler", "label")), influxdb.OrgsResourceType, labelSvc)
-	return NewHTTPOrgHandler(log.With(zap.String("handler", "org")), NewAuthedOrgService(ts.OrgSvc), urmHandler, labelHandler, secretHandler)
+	return NewHTTPOrgHandler(log.With(zap.String("handler", "org")), NewAuthedOrgService(ts.OrgSvc), urmHandler, secretHandler)
 }
 
 func (ts *TenantSystem) NewBucketHTTPHandler(log *zap.Logger, labelSvc influxdb.LabelService) *BucketHandler {

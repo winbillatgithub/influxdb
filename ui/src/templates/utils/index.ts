@@ -74,16 +74,15 @@ export const getLabelRelationships = (resource: {
 export const getIncludedLabels = (included: {type: TemplateType}[]) =>
   included.filter((i): i is LabelIncluded => i.type === TemplateType.Label)
 
+export interface TemplateDetails {
+  directory: string
+  templateExtension: string
+  templateName: string
+}
+
 // See https://github.com/influxdata/community-templates/
-export const getTemplateUrlDetailsFromGithubSource = (
-  url: string
-): {directory: string; templateExtension: string; templateName: string} => {
-  if (!url.includes('https://github.com/influxdata/community-templates/')) {
-    throw new Error(
-      "We're only going to fetch from influxdb's github repo right now"
-    )
-  }
-  const [, templatePath] = url.split('/blob/master/')
+const getTemplateDetailsFromGithubSource = (url: string): TemplateDetails => {
+  const [, templatePath] = url.split('/master/')
   const [directory, name] = templatePath.split('/')
   const [templateName, templateExtension] = name.split('.')
   return {
@@ -93,7 +92,28 @@ export const getTemplateUrlDetailsFromGithubSource = (
   }
 }
 
-export const getGithubUrlFromTemplateUrlDetails = (
+// todo: implement when we load files
+const getTemplateDetailsFromFileSource = (_source: string): TemplateDetails => {
+  return {
+    directory: '',
+    templateExtension: '',
+    templateName: '',
+  }
+}
+
+export const getTemplateDetails = (source: string): TemplateDetails => {
+  if (source.includes('https')) {
+    return getTemplateDetailsFromGithubSource(source)
+  }
+
+  if (source.includes('file://')) {
+    return getTemplateDetailsFromFileSource(source)
+  }
+
+  throw new Error('unsupported format')
+}
+
+export const getGithubUrlFromTemplateDetails = (
   directory: string,
   templateName: string,
   templateExtension: string

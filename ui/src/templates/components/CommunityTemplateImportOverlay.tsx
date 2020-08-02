@@ -18,11 +18,20 @@ import {ComponentStatus} from '@influxdata/clockface'
 
 // Utils
 import {getByID} from 'src/resources/selectors'
-import {getGithubUrlFromTemplateUrlDetails} from 'src/templates/utils'
+import {getGithubUrlFromTemplateDetails} from 'src/templates/utils'
+import {reportError} from 'src/shared/utils/errors'
 
-import {installTemplate, reviewTemplate} from 'src/templates/api'
+import {
+  installTemplate,
+  reviewTemplate,
+  updateStackName,
+} from 'src/templates/api'
 
-import {communityTemplateInstallSucceeded} from 'src/shared/copy/notifications'
+import {
+  communityTemplateInstallFailed,
+  communityTemplateInstallSucceeded,
+  communityTemplateRenameFailed,
+} from 'src/shared/copy/notifications'
 
 interface State {
   status: ComponentStatus
@@ -75,7 +84,7 @@ class UnconnectedTemplateImportOverlay extends PureComponent<Props> {
     templateName,
     templateExtension
   ) => {
-    const yamlLocation = getGithubUrlFromTemplateUrlDetails(
+    const yamlLocation = getGithubUrlFromTemplateDetails(
       directory,
       templateName,
       templateExtension
@@ -87,7 +96,10 @@ class UnconnectedTemplateImportOverlay extends PureComponent<Props> {
       this.props.setCommunityTemplateToInstall(summary)
       return summary
     } catch (err) {
-      console.error(err)
+      this.props.notify(communityTemplateInstallFailed(err.message))
+      reportError(err, {
+        name: 'The community template fetch for preview failed',
+      })
     }
   }
 
@@ -103,27 +115,34 @@ class UnconnectedTemplateImportOverlay extends PureComponent<Props> {
   private handleInstallTemplate = async () => {
     const {directory, org, templateExtension, templateName} = this.props
 
-    const yamlLocation = getGithubUrlFromTemplateUrlDetails(
+    const yamlLocation = getGithubUrlFromTemplateDetails(
       directory,
       templateName,
       templateExtension
     )
 
+    let summary
     try {
-      const summary = await installTemplate(
+      summary = await installTemplate(
         org.id,
         yamlLocation,
         this.props.resourcesToSkip
       )
-      this.props.notify(communityTemplateInstallSucceeded(templateName))
-
-      this.props.fetchAndSetStacks(org.id)
-
-      this.onDismiss()
-
-      return summary
     } catch (err) {
-      console.error('Error installing template', err)
+      this.props.notify(communityTemplateInstallFailed(err.message))
+      reportError(err, {name: 'Failed to install community template'})
+    }
+
+    try {
+      await updateStackName(summary.stackID, templateName)
+
+      this.props.notify(communityTemplateInstallSucceeded(templateName))
+    } catch (err) {
+      this.props.notify(communityTemplateRenameFailed())
+      reportError(err, {name: 'The community template rename failed'})
+    } finally {
+      this.props.fetchAndSetStacks(org.id)
+      this.onDismiss()
     }
   }
 }
