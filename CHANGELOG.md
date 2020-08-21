@@ -1,3 +1,14 @@
+## v2.0.0-beta.17 [unreleased]
+
+### Features
+
+1. [19246](https://github.com/influxdata/influxdb/pull/19246): Redesign load data page to increase discovery and ease of use
+1. [19334](https://github.com/influxdata/influxdb/pull/19334): Add --active-config flag to influx to set config for single command
+
+### Bug Fixes
+
+1. [19331](https://github.com/influxdata/influxdb/pull/19331): Add description to auth influx command outputs.
+
 ## v2.0.0-beta.16 [2020-08-07]
 
 ### Breaking
@@ -13,6 +24,7 @@
 1. [19223](https://github.com/influxdata/influxdb/pull/19223): Add dashboards command to influx CLI
 1. [19225](https://github.com/influxdata/influxdb/pull/19225): Allow user onboarding to optionally set passwords
 1. [18841](https://github.com/influxdata/influxdb/pull/18841): Limit query response sizes for queries built in QueryBuilder by requiring an aggregate window
+1. [19135](https://github.com/influxdata/influxdb/pull/19135): Add telegram notification.
 
 ### Bug Fixes
 
@@ -23,6 +35,7 @@
 
 ### UI Improvements
 1. [19231](https://github.com/influxdata/influxdb/pull/19231): Alerts page filter inputs now have tab indices for keyboard navigation
+1. [19364](https://github.com/influxdata/influxdb/pull/19364): Errors in OSS are now properly printed to the console
 
 ## v2.0.0-beta.15 [2020-07-23]
 

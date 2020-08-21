@@ -377,6 +377,11 @@ export const timeMachineReducer = (
       return setViewProperties(state, {yColumn})
     }
 
+    case 'SET_Y_SERIES_COLUMNS': {
+      const {ySeriesColumns} = action.payload
+      return setViewProperties(state, {ySeriesColumns})
+    }
+
     case 'SET_X_AXIS_LABEL': {
       const {xAxisLabel} = action.payload
 
@@ -384,6 +389,7 @@ export const timeMachineReducer = (
         case 'histogram':
         case 'heatmap':
         case 'scatter':
+        case 'mosaic':
           return setViewProperties(state, {xAxisLabel})
         default:
           return setYAxis(state, {label: xAxisLabel})
@@ -397,6 +403,7 @@ export const timeMachineReducer = (
         case 'histogram':
         case 'heatmap':
         case 'scatter':
+        case 'mosaic':
           return setViewProperties(state, {yAxisLabel})
         default:
           return setYAxis(state, {label: yAxisLabel})
@@ -467,6 +474,7 @@ export const timeMachineReducer = (
           return setViewProperties(state, {prefix})
         case 'check':
         case 'xy':
+        case 'band':
           return setYAxis(state, {prefix})
         default:
           return state
@@ -483,6 +491,7 @@ export const timeMachineReducer = (
           return setViewProperties(state, {tickPrefix})
         case 'check':
         case 'xy':
+        case 'band':
           return setYAxis(state, {tickPrefix})
         default:
           return state
@@ -499,6 +508,7 @@ export const timeMachineReducer = (
           return setViewProperties(state, {suffix})
         case 'check':
         case 'xy':
+        case 'band':
           return setYAxis(state, {suffix})
         default:
           return state
@@ -515,6 +525,7 @@ export const timeMachineReducer = (
           return setViewProperties(state, {tickSuffix})
         case 'check':
         case 'xy':
+        case 'band':
           return setYAxis(state, {tickSuffix})
         default:
           return state
@@ -531,6 +542,7 @@ export const timeMachineReducer = (
         case 'scatter':
         case 'check':
         case 'xy':
+        case 'band':
         case 'histogram':
           return setViewProperties(state, {colors})
         case 'line-plus-single-stat':

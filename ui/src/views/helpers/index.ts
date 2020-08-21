@@ -26,6 +26,7 @@ import {
   HeatmapViewProperties,
   HistogramViewProperties,
   LinePlusSingleStatProperties,
+  MosaicViewProperties,
   MarkdownViewProperties,
   NewView,
   RemoteDataState,
@@ -35,6 +36,7 @@ import {
   ViewProperties,
   ViewType,
   XYViewProperties,
+  BandViewProperties,
 } from 'src/types'
 
 export const defaultView = (name: string = DEFAULT_CELL_NAME) => {
@@ -90,6 +92,32 @@ export function defaultLineViewProperties() {
   }
 }
 
+export function defaultBandViewProperties() {
+  return {
+    queries: [defaultViewQuery()],
+    colors: DEFAULT_LINE_COLORS as Color[],
+    legend: {},
+    note: '',
+    showNoteWhenEmpty: false,
+    axes: {
+      x: {
+        bounds: ['', ''],
+        label: '',
+        prefix: '',
+        suffix: '',
+        scale: 'linear',
+      } as Axis,
+      y: {
+        bounds: ['', ''],
+        label: '',
+        prefix: '',
+        suffix: '',
+        scale: 'linear',
+      } as Axis,
+    },
+  }
+}
+
 function defaultGaugeViewProperties() {
   return {
     queries: [defaultViewQuery()],
@@ -136,6 +164,17 @@ const NEW_VIEW_CREATORS = {
       xColumn: null,
       yColumn: null,
       position: 'overlaid',
+    },
+  }),
+  band: (): NewView<BandViewProperties> => ({
+    ...defaultView(),
+    properties: {
+      ...defaultBandViewProperties(),
+      type: 'band',
+      shape: 'chronograf-v2',
+      geom: 'line',
+      xColumn: null,
+      yColumn: null,
     },
   }),
   histogram: (): NewView<HistogramViewProperties> => ({
@@ -251,6 +290,28 @@ const NEW_VIEW_CREATORS = {
       xColumn: null,
       xDomain: null,
       yColumn: null,
+      yDomain: null,
+      xAxisLabel: '',
+      yAxisLabel: '',
+      xPrefix: '',
+      xSuffix: '',
+      yPrefix: '',
+      ySuffix: '',
+    },
+  }),
+  mosaic: (): NewView<MosaicViewProperties> => ({
+    ...defaultView(),
+    properties: {
+      type: 'mosaic',
+      shape: 'chronograf-v2',
+      queries: [defaultViewQuery()],
+      colors: NINETEEN_EIGHTY_FOUR,
+      note: '',
+      showNoteWhenEmpty: false,
+      fillColumns: null,
+      xColumn: null,
+      xDomain: null,
+      ySeriesColumns: null,
       yDomain: null,
       xAxisLabel: '',
       yAxisLabel: '',
